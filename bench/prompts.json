@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "note": "Fixed benchmark set. Do not edit without bumping version - every parity test from R1 onward compares against R0 output on exactly these prompts.",
+  "prompts": [
+    {
+      "id": "short-00",
+      "category": "short",
+      "text": "What is the capital of France?"
+    },
+    {
+      "id": "short-01",
+      "category": "short",
+      "text": "Write a haiku about debugging."
+    },
+    {
+      "id": "short-02",
+      "category": "short",
+      "text": "Explain recursion in one sentence."
+    },
+    {
+      "id": "short-03",
+      "category": "short",
+      "text": "What does the acronym GPU stand for?"
+    },
+    {
+      "id": "short-04",
+      "category": "short",
+      "text": "Name three sorting algorithms."
+    },
+    {
+      "id": "short-05",
+      "category": "short",
+      "text": "Why is the sky blue?"
+    },
+    {
+      "id": "short-06",
+      "category": "short",
+      "text": "Convert 100 degrees Fahrenheit to Celsius."
+    },
+    {
+      "id": "short-07",
+      "category": "short",
+      "text": "What is a race condition?"
+    },
+    {
+      "id": "short-08",
+      "category": "short",
+      "text": "Give me a one-line definition of entropy."
+    },
+    {
+      "id": "short-09",
+      "category": "short",
+      "text": "What year did the Apollo 11 mission land on the moon?"
+    },
+    {
+      "id": "short-10",
+      "category": "short",
+      "text": "Translate 'good morning' into Japanese."
+    },
+    {
+      "id": "short-11",
+      "category": "short",
+      "text": "What is the time complexity of binary search?"
+    },
+    {
+      "id": "short-12",
+      "category": "short",
+      "text": "Suggest a name for a pet turtle."
+    },
+    {
+      "id": "short-13",
+      "category": "short",
+      "text": "What is the difference between TCP and UDP?"
+    },
+    {
+      "id": "short-14",
+      "category": "short",
+      "text": "Write a SQL query that selects all rows from a table named users."
+    },
+    {
+      "id": "short-15",
+      "category": "short",
+      "text": "What does the Python GIL do?"
+    },
+    {
+      "id": "short-16",
+      "category": "short",
+      "text": "Summarize photosynthesis in under twenty words."
+    },
+    {
+      "id": "short-17",
+      "category": "short",
+      "text": "What is 17 times 23?"
+    },
+    {
+      "id": "short-18",
+      "category": "short",
+      "text": "List the first five prime numbers."
+    },
+    {
+      "id": "short-19",
+      "category": "short",
+      "text": "What is a pointer in C?"
+    },
+    {
+      "id": "medium-00",
+      "category": "medium",
+      "text": "I have a Python function that reads a large CSV file into memory and then filters it. It works fine on small files but runs out of memory on files over two gigabytes. Explain what is going wrong and describe the general approach I should take instead, without writing the code for me."
+    },
+    {
+      "id": "medium-01",
+      "category": "medium",
+      "text": "Explain the difference between processes and threads. Cover memory isolation, the cost of context switching, and when you would reach for one over the other in a server workload. Assume I already know what a system call is."
+    },
+    {
+      "id": "medium-02",
+      "category": "medium",
+      "text": "A colleague says our REST API should switch to GraphQL because 'it's faster.' Lay out the actual trade-offs involved so I can evaluate that claim: what GraphQL genuinely improves, what it costs, and what performance problems it does not solve at all."
+    },
+    {
+      "id": "medium-03",
+      "category": "medium",
+      "text": "Describe how a hash map handles collisions. Compare separate chaining against open addressing, and explain what happens to lookup cost as the load factor climbs toward one in each scheme."
+    },
+    {
+      "id": "medium-04",
+      "category": "medium",
+      "text": "Walk me through what happens between typing a URL into a browser and the first byte of HTML arriving. Include DNS, TCP, TLS, and the initial HTTP request, and note roughly where the time tends to go."
+    },
+    {
+      "id": "medium-05",
+      "category": "medium",
+      "text": "Explain what a database index actually is at the storage level. Why does adding an index speed up reads but slow down writes, and why does an index on a low-cardinality column often fail to help at all?"
+    },
+    {
+      "id": "medium-06",
+      "category": "medium",
+      "text": "I keep hearing that Rust prevents data races at compile time. Explain the mechanism that makes that claim true, and be specific about which class of concurrency bugs it does not prevent."
+    },
+    {
+      "id": "medium-07",
+      "category": "medium",
+      "text": "Compare optimistic and pessimistic locking in a database. Describe a concrete workload where each one wins, and explain what failure looks like when you pick the wrong one."
+    },
+    {
+      "id": "medium-08",
+      "category": "medium",
+      "text": "Explain the CAP theorem precisely. In particular, clarify what 'availability' and 'consistency' mean in the formal statement, because the informal versions people use in conversation are usually wrong."
+    },
+    {
+      "id": "medium-09",
+      "category": "medium",
+      "text": "Describe how garbage collection works in a generational collector. Explain the weak generational hypothesis, why it holds in practice, and what kinds of programs violate it badly enough to cause problems."
+    },
+    {
+      "id": "medium-10",
+      "category": "medium",
+      "text": "My unit tests pass locally but fail in CI roughly one run in ten, always in a different test. Describe the categories of cause I should be working through, and how I would distinguish between them."
+    },
+    {
+      "id": "medium-11",
+      "category": "medium",
+      "text": "Explain the difference between latency and throughput using a concrete example from a web service. Then explain why optimizing for one can actively harm the other, and give a case where that trade-off is worth making."
+    },
+    {
+      "id": "medium-12",
+      "category": "medium",
+      "text": "Describe what a memory allocator does. Cover fragmentation, why it happens, and the difference between internal and external fragmentation, with an example of each."
+    },
+    {
+      "id": "medium-13",
+      "category": "medium",
+      "text": "Explain how public key cryptography lets two parties who have never met establish a shared secret over a channel an attacker can read. Be precise about what the attacker can and cannot do."
+    },
+    {
+      "id": "medium-14",
+      "category": "medium",
+      "text": "I have a service where p50 latency is 40ms and p99 latency is 3 seconds. Explain what kinds of underlying causes produce a gap that large, and how I would go about narrowing down which one I have."
+    },
+    {
+      "id": "long-00",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nBased only on the note above, explain why the partition key choice is now the primary constraint on scaling this pipeline, and what the deduplication stage would need to change for a different key to be viable."
+    },
+    {
+      "id": "long-01",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nUsing the note above, identify the most likely cause of the checkpoint duration increase during peak traffic, and explain the reasoning that connects it to the described architecture."
+    },
+    {
+      "id": "long-02",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nFrom the note above, assess whether the dashboard freshness target is actually at risk, and state which specific numbers in the document support your conclusion."
+    },
+    {
+      "id": "long-03",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nGiven the note above, propose an ordering for addressing the described problems, and justify the ordering in terms of which fixes unblock which others."
+    },
+    {
+      "id": "long-04",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nReading only the note above, list every assumption the current design depends on that is not explicitly guaranteed by the infrastructure described."
+    },
+    {
+      "id": "long-05",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nBased on the note above, explain what would happen during a replay after a checkpoint timeout, specifically with respect to the deduplication window and the per-event dashboard sink."
+    },
+    {
+      "id": "long-06",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nFrom the note above, estimate the peak per-second event rate and explain the assumptions behind your estimate, noting where the document is insufficiently precise."
+    },
+    {
+      "id": "long-07",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nUsing the note above, explain why writing one sink in micro-batches and the other per event creates operational risk, and describe the failure mode most likely to surface first."
+    },
+    {
+      "id": "long-08",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nGiven the note above, explain what a reviewer should ask about before approving any change to the partition key, drawing each question from a specific statement in the document."
+    },
+    {
+      "id": "long-09",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nBased on the note above, describe how you would instrument this pipeline to distinguish partition skew effects from state-size effects on checkpoint duration."
+    },
+    {
+      "id": "long-10",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nFrom the note above, identify which stated metric is the least trustworthy as written and explain precisely what is ambiguous about it."
+    },
+    {
+      "id": "long-11",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nUsing the note above, explain the relationship between the evening traffic peak and the three checkpoint timeouts, and state clearly what the document does and does not establish about causation."
+    },
+    {
+      "id": "long-12",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nGiven the note above, explain what constraints the exactly-once configuration places on any proposed fix to the skew problem."
+    },
+    {
+      "id": "long-13",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nBased on the note above, describe the smallest change that would reduce checkpoint duration without altering the partition key, and explain its cost."
+    },
+    {
+      "id": "long-14",
+      "category": "long",
+      "text": "Internal engineering note, revision 4.\n\nThe ingestion pipeline processes roughly 240 million events per day, arriving unevenly: traffic peaks at 08:00 and 19:00 UTC, with the evening peak running about 1.8 times the daily mean. Events land in a Kafka topic partitioned by tenant identifier, which was chosen so that per-tenant ordering guarantees could be preserved without additional coordination. In practice this has produced severe partition skew, because the four largest tenants account for approximately 61 percent of all events. Two partitions consistently run at over 90 percent of their consumer capacity while eleven others sit below 20 percent.\n\nDownstream, a Flink job performs enrichment by joining each event against a customer profile store held in RocksDB. The join is keyed on a composite of tenant identifier and user identifier. Checkpointing is configured at a 30 second interval with exactly-once semantics. During the evening peak, checkpoint duration has been observed to climb from a baseline of roughly 4 seconds to as much as 47 seconds, and on three occasions in the past quarter a checkpoint has timed out entirely, triggering a job restart and a replay window of several minutes.\n\nEnriched events are written to two sinks. The first is a columnar warehouse used for analytics, written in 15 minute micro-batches. The second is a low-latency key-value store that backs the customer-facing dashboard, written per event. The dashboard has a stated freshness target of 60 seconds at the 99th percentile. This target is currently met on 26 of the last 30 days.\n\nA previous attempt to rebalance by switching the partition key to a hash of the user identifier was reverted after two days, because it broke the per-tenant ordering assumption that the deduplication stage depends on. The deduplication stage maintains a sliding window of event fingerprints and assumes that duplicates of a given event arrive within the same partition and within 10 minutes of one another.\n\nReading the note above, explain why the previous rebalancing attempt was reverted, and describe what a safe migration path for that same change would have to include."
+    }
+  ]
+}
