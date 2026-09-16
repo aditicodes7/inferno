@@ -265,3 +265,47 @@ decision, and taking it now would not change any work done today.
 R2 shows its real pass/fail state; R3, R4 and R5 render as explicitly empty.
 Invented placeholder numbers would be precisely the failure rules 9 and 10 exist
 to prevent. The Mac/MPS hardware caveat is a banner, not a footnote.
+
+---
+
+## 2026-09-16 — Parity criterion becomes two-tier (resolves Q2)
+
+**Chosen:** float32 asserts EXACT batched-vs-unbatched equality at every batch
+size - that is the gate on the batching code. float16 asserts only that nothing
+becomes NaN or degenerate; drift is reported, not asserted.
+
+**Rejected:** (a) per-batch-size reference files - cheap, but the test could no
+longer catch a bug that is stable across batch sizes; (b) replacing exact token
+matching with logits-closeness everywhere - more informative but gives up the
+one-line assertion that makes the project legible.
+
+**Why:** measured, not assumed. In float32 batched output is bit-identical to
+unbatched for all 16 test prompts at batch sizes 1/2/4/8/16. In float16 it is
+not, and the cause is not a defect: `long-01` has exactly 11 pad slots in the
+batch-of-2 run that passes and 11 in the batch-of-4 run that diverges at token
+67. Identical padding, different batch size - differently shaped matmuls reduce
+in different orders, and greedy decoding amplifies the last bit. Demanding
+exactness in float16 would mean chasing a property of floating-point addition.
+
+**What float16 CAN be held to** is finiteness. That failure mode was real
+(B4a) and is fixed.
+
+**Propagates to:** R3, R4, R5 and the vLLM comparison, where CUDA kernels will
+reduce differently again.
+
+---
+
+## 2026-09-16 — Additive attention mask uses finfo.min / 2, not finfo.min
+
+**Chosen:** `mask_fill_value(dtype) = torch.finfo(dtype).min / 2`.
+
+**Rejected:** `torch.finfo(dtype).min`, which is what HuggingFace uses and what
+the first implementation copied.
+
+**Why:** in float16 the most negative finite value is -65504, so adding any
+attention score beyond about -16 rounds past the end of the range to -inf.
+Scores reach +/-225 by layer 8 of this model. A fully-masked row - which exists
+only because of left padding - then becomes all -inf, and softmax yields NaN.
+Halving leaves ~32752 of headroom while `exp(-32752 - max)` still underflows to
+exactly 0 in the float32 softmax, so masked positions contribute nothing, which
+is the entire requirement. See `docs/bugs.md` B4 for the full trace.

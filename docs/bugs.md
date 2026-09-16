@@ -105,6 +105,64 @@ Why it worked: n/a. Confirmed by toggling the penalty alone: 1/12 -> 12/12.
 
 ---
 
+## 2026-09-16 — R2 batch parity fails at batch_size=4 [RESOLVED]
+
+Symptom:      batch 1 PASS, batch 2 PASS, batch 4 FAIL. Two failure shapes:
+              (a) medium-00/01 emit token id 0 forever; (b) long-01 diverges
+              at token 67 after 67 exact matches.
+Expected:     identical tokens at every batch size.
+Hypotheses:   1) fully-masked rows -> NaN  2) wrong position ids for padded
+              sequences  3) batched matmul reduction order.
+Test:         (i) compare each prompt batched-of-4 vs alone, same code path,
+              both dtypes; (ii) instrument every tensor inside the layer.
+Result (i):   float32 - all four IDENTICAL. So the batching LOGIC is correct:
+              mask, position ids, cache offsets and left-padding are all right.
+              float16 - (a) and (b) are two DIFFERENT effects. long-01 has
+              exactly 11 pad slots in the batch-of-2 run that passed and 11 in
+              the batch-of-4 run that diverged; padding identical, batch size
+              not. (b) is B1 one level up: not a defect, see Q2.
+Result (ii):  first nonfinite tensor is SOFTMAX at layer 8, on padding rows.
+
+Actual cause: the additive mask used `torch.finfo(dtype).min`. float16's most
+              negative finite value is -65504, so adding any score beyond about
+              -16 rounds past the end of the range to -inf. Scores reach +/-225
+              by layer 8. A fully-masked row then becomes ALL -inf, and softmax
+              computes exp(-inf - (-inf)) = NaN.
+
+              Fully-masked rows exist only because of LEFT padding: a leading
+              pad query row has no real key at or before it. 398 such rows in
+              one 485-wide batch.
+
+              The NaN then escaped into REAL tokens one layer later: pad K/V
+              live in the same cache, and a masked weight is exactly 0 after
+              the float32 softmax - but 0 * NaN = NaN in the value matmul.
+              Masking does not protect a real query from a NaN pad value.
+
+Fix:          `mask_fill_value(dtype) = torch.finfo(dtype).min / 2`.
+
+Why it worked: a masked position must contribute exactly zero weight, which
+              requires a value that is very negative - not maximally negative.
+              Halving leaves ~32752 of headroom for the score while
+              exp(-32752 - max) still underflows to exactly 0 in the float32
+              softmax, so masked positions still contribute nothing.
+              finfo.min is the obvious choice and is precisely the one value
+              that cannot absorb an addition.
+
+TWO MISTAKES WORTH KEEPING:
+  1. The probe that misled me. I tested `(-5) + finfo.min`, saw -65504.0 and
+     concluded "does not overflow". -5 is within half a ULP of the endpoint so
+     it rounds back; -50 and beyond do not. A probe value chosen without
+     thinking about the real magnitude of the quantity produced a confident
+     wrong conclusion that cost an entire wrong fix.
+  2. The wrong fix. Zeroing the residual stream at padding positions is
+     provably output-neutral and sounded principled, but it addressed
+     ACTIVATION growth when the overflow was in the MASK ADDITION. It moved
+     the first NaN from layer 1 to layer 8 and made long-01 worse. A fix that
+     moves a symptom without removing it is evidence the mechanism is still
+     wrong - and reverting it was the right call, not patching on top.
+
+---
+
 ## 2026-09-16 — R2 batch parity fails at batch_size=4, passes at 1 and 2
 
 Symptom:      batch 1 PASS, batch 2 PASS, batch 4 FAIL. Two distinct failure

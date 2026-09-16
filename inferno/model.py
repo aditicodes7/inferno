@@ -118,6 +118,28 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     return x[:, :, None, :, :].expand(b, h, n_rep, t, d).reshape(b, h * n_rep, t, d)
 
 
+def mask_fill_value(dtype: torch.dtype) -> torch.Tensor:
+    """The "invisible" value for an ADDITIVE attention mask.
+
+    NOT `finfo.min`, which is the obvious choice and is wrong in float16.
+    The mask is added to the raw scores, and float16's most negative finite
+    value is -65504: adding any score beyond about -16 to it rounds past the
+    end of the range and becomes -inf. Attention scores reach -225 by layer 8
+    of this model. A row that is entirely masked then becomes all -inf, and
+    softmax computes exp(-inf - (-inf)) = NaN.
+
+    That NaN then escapes into real tokens, because pad K/V live in the same
+    cache and a masked weight is exactly 0 - but 0 * NaN = NaN in the value
+    matmul. Masking does not protect a real query from a NaN pad value.
+    (PROJECT_LOG.md B4.)
+
+    Halving the value leaves ~32752 of headroom for the score, while
+    exp(-32752 - max) still underflows to exactly 0 in the float32 softmax -
+    so masked positions contribute nothing, which is the whole requirement.
+    """
+    return torch.tensor(torch.finfo(dtype).min / 2, dtype=dtype)
+
+
 def build_causal_mask(q_len: int, kv_len: int, dtype: torch.dtype, device: str):
     """Additive mask, or None when every key is visible.
 
@@ -131,8 +153,7 @@ def build_causal_mask(q_len: int, kv_len: int, dtype: torch.dtype, device: str):
     offset = kv_len - q_len
     keys = torch.arange(kv_len, device=device)[None, :]
     rows = torch.arange(q_len, device=device)[:, None] + offset
-    # finfo.min rather than -inf, matching HuggingFace exactly.
-    blocked = torch.full((), torch.finfo(dtype).min, dtype=dtype, device=device)
+    blocked = mask_fill_value(dtype).to(device)
     allowed = torch.zeros((), dtype=dtype, device=device)
     return torch.where(keys <= rows, allowed, blocked)[None, None]
 
@@ -159,7 +180,7 @@ def build_padded_causal_mask(pad_mask: torch.Tensor, q_len: int,
     return torch.where(
         visible.unsqueeze(1),
         torch.zeros((), dtype=dtype, device=device),
-        torch.full((), torch.finfo(dtype).min, dtype=dtype, device=device),
+        mask_fill_value(dtype).to(device),
     )
 
 

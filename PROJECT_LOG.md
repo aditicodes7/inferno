@@ -7,7 +7,7 @@ Phases map to the rung plan in `CLAUDE.md`: R0 baseline, R1 own attention + KV
 cache, R2 static batching, R3 continuous batching, R4 paged KV cache,
 R5 prefix caching.
 
-**Status: R2 in progress — batch parity fails at batch_size=4 (Bugs §B4). R1 complete and accepted (parity 50/50).**
+**Status: R2 complete and accepted. R0, R1, R2 done; R3 next.**
 
 ---
 
@@ -189,6 +189,26 @@ categorical palette validated for CVD separation in both light and dark themes),
 `bench/diagnose_parity.py` (teacher-forced agreement harness — the
 tool that localised B3) and `bench/run_inferno.py` (R1 measurement, metric
 definitions identical to `run_baseline.py`).
+
+### Phase 2 (R2) — static batching — 2026-09-16 — **COMPLETE, ACCEPTED**
+
+Built: `inferno/batch_engine.py` (left-padding, batched prefill + decode),
+padding-aware causal mask and pad-derived position ids in `inferno/model.py`,
+`tests/test_batch_parity.py`, `bench/run_batched.py`.
+
+Worked first try: left-padding and the single shared `cache.length` it enables
+(right-alignment means every sequence writes at the same offset); position ids
+from `pad_mask.cumsum(-1) - 1`; batched prefill and decode; **the batching logic
+itself, which float32 showed was correct from the first run**.
+
+Did **not** work first try: a `NameError` from my own patch dropping the
+`rope()` call (loud, instant, cheap); then B4 — which consumed a wrong
+hypothesis, a wrong probe, and a wrong fix before the instrumented trace found
+it. Details in §B4.
+
+Acceptance: `INFERNO_FULL=1 pytest tests/test_batch_parity.py` — **10 passed**.
+float32 exact at batch sizes 1/2/4/8/16 across 16 mixed-length prompts;
+float16 79/80 exact with one drift (`long-04` at bs=4, token 37).
 
 ---
 
@@ -426,13 +446,102 @@ There are **two** float16 effects and they are unrelated:
 
 **(b) is not fixable.** It is the same float-associativity property proven in B1,
 and it means *"parity at every batch size" may be unachievable in float16 between
-differently-shaped matmuls.* That is a criterion decision, not a defect — see Q2,
-which this promotes from downgraded back to blocking.
+differently-shaped matmuls.* That is a criterion decision, not a defect — see Q2.
+
+---
+
+**ROOT CAUSE OF (a), CONFIRMED 2026-09-16.** Instrumenting every tensor inside
+the layer put the first nonfinite value in **softmax, layer 8, on padding rows**:
+
+```
+L0  scores= 940.0   softmax=1.0   x=0.0
+L7  scores=  21.4   softmax=0.0   x=0.0
+L8  scores= 224.9   softmax=NONFINITE:193030   ->  x=NaN
+```
+
+The additive mask used `torch.finfo(dtype).min`. float16's most negative finite
+value is **−65504**, so adding any score beyond about −16 rounds past the end of
+the range to **−inf**. Scores reach ±225 by layer 8. A fully-masked row then
+becomes *all* −inf, and softmax computes `exp(-inf − (−inf))` = **NaN**.
+
+```
+score    -5 + finfo.min  ->  -65504.0     (rounds back, finite)
+score   -50 + finfo.min  ->  -inf
+score  -225 + finfo.min  ->  -inf
+score  -225 + min/2      ->  -32992.0     (finite, and exp() still underflows to 0)
+```
+
+**Fix:** `mask_fill_value(dtype) = finfo.min / 2`. A masked position must
+contribute *exactly zero* weight, which requires a value that is very negative —
+not maximally negative. `finfo.min` is the obvious choice and is precisely the
+one value that cannot absorb an addition.
+
+**Two mistakes worth keeping, because both are instructive:**
+
+1. **The probe that misled me.** I tested `(-5) + finfo.min`, saw `-65504.0`, and
+   concluded "does not overflow" — and wrote that into the log as a confirmed
+   fact. −5 is within half a ULP of the endpoint so it rounds back; −50 does not.
+   *A probe value chosen without thinking about the real magnitude of the
+   quantity produced a confident wrong conclusion*, and that conclusion then
+   ruled out the true cause for an entire debugging cycle.
+2. **The wrong fix.** Zeroing the residual stream at padding positions is
+   provably output-neutral and sounded principled. It addressed *activation
+   growth* when the overflow was in the *mask addition*. It moved the first NaN
+   from layer 1 to layer 8 and made `long-01` strictly worse (divergence at 67 →
+   at 0). **A fix that moves a symptom without removing it is evidence the
+   mechanism is still wrong** — the right response was to revert it and go
+   measure, not to patch on top of it.
 
 *Build note:* one self-inflicted error before this — the patch that added the
 padded-mask branch dropped the `cos, sin = self.rope(...)` call, giving a clean
 `NameError` on the first run. Mentioned only because it is the contrast case:
 a structural mistake fails loudly and instantly, which is the cheap kind.
+
+### B5 — throughput vs batch size is non-monotonic, with an isolated peak at 16
+**2026-09-16. OPEN — reproducible, mechanism unconfirmed.**
+
+*Symptom:* static batching buys almost nothing from bs=1 to bs=8 (28.30 → 30.53
+tok/s, +8%), then bs=16 triples it, then bs=20 falls back.
+
+```
+bs    tok/s    wall_s   batches   steps   ms/step
+ 1    28.30     185.7        50    5257      35.3
+ 2    30.16     174.3        25    2811      62.0
+ 4    30.60     171.8        13    1538     111.7
+ 8    30.53     172.2         7     896     192.2
+12    37.06     141.6         5     640     221.3
+16    97.06      54.2         4     512     105.9   <-- isolated peak
+20    68.36      76.9         3     384     200.3
+```
+
+*Reproducible:* bs=16 measured at 96.96, 97.06 and 99.42 tok/s across three
+independent runs (±2.5%). Token counts are the same at every batch size (5257 vs
+5263), so this is not an artifact of generating less.
+
+*What it is not:* not batch composition. Weighting each batch by its padded
+width, bs=16 does *more* total attention work than bs=12 (2.22M vs 2.40M
+sequence-step-width units is only a 7% spread) while taking 2.6× less wall time.
+Not a monotone cliff either — bs=20 is slow again, so it is a peak at 16, not a
+threshold above it.
+
+*Hypotheses:* (1) MPS matmul kernel selection at a 16-wide tile boundary — 16 is
+a natural SIMD width, and per-step cost halving while work doubles is what a
+better kernel looks like; (2) a memory-layout or alignment effect that happens
+to be satisfied at exactly 16; (3) something about how the decode step's small
+matrices are dispatched that changes shape at 16.
+
+*Distinguishing test, not yet run:* sweep 13,14,15,16,17,18 with fixed-length
+prompts so composition is held constant. If the dip is exactly at 16 and nowhere
+else, it is kernel selection.
+
+*Why this matters beyond the anomaly:* **the textbook batching argument does not
+hold here.** Per-step cost from 1→8 grows ~1.75× per doubling, i.e. nearly
+linearly with batch size, so batching recovers almost nothing. That argument
+assumes decode is weight-bandwidth-bound — true for an 8B model on an A100,
+evidently not for a 0.5B model on MPS, where the weights are small enough to sit
+in cache and the fixed per-step cost is not being amortised. This is exactly the
+kind of honest negative result the gap analysis is for, and it is a strong reason
+to re-run the batch-size sweep on rented GPU hardware before drawing conclusions.
 
 ---
 
@@ -535,6 +644,44 @@ to waste reservation on. The prompts that did stop early show the real cost —
 1.49 MB wasted on one request**. A workload with realistic length variance
 would show far more waste. That gap is what R4 exists to close.
 
+### R2 — static batching, left-padded — **ACCEPTED**
+**Hardware: MacBook, Apple Silicon, MPS, float16. NOT a GPU number.**
+Config: all 50 prompts, eager attention, greedy, batch composed **in list
+order and deliberately not sorted by length**, `max_new_tokens=128`.
+
+| batch | tok/s | wall s | latency p50 | latency p95 | blocked steps (mean) | max | steps wasted |
+|---|---|---|---|---|---|---|---|
+| 1 | 28.30 | 185.7 | 4.24 s | 5.09 s | 0.0 | 0 | **0.0%** |
+| 2 | 30.16 | 174.3 | 7.13 s | 9.34 s | 7.3 | 95 | 6.5% |
+| 4 | 30.60 | 171.8 | 13.54 s | 17.74 s | 12.8 | 115 | 10.8% |
+| 8 | 30.53 | 172.2 | 24.66 s | 32.11 s | 22.9 | 120 | 17.9% |
+| 12 | 37.06 | 141.6 | 27.87 s | 39.20 s | 23.0 | 120 | 18.0% |
+| 16 | **97.06** | 54.2 | 10.65 s | 25.39 s | 22.7 | 120 | 17.8% |
+| 20 | 68.36 | 76.9 | 32.38 s | 33.77 s | 22.9 | 120 | 17.9% |
+
+Raw: [`r2_batched_mps_bs1-2-4_…`](results/mac/) · [`…bs8-16…`](results/mac/) ·
+[`…bs12-20…`](results/mac/) · [`…bs16…`](results/mac/)
+
+*Correctness proof:* float32 batched output **bit-identical** to unbatched at
+every batch size, 16 mixed-length prompts. float16 79/80 exact (see Q2 for why
+float16 is not held to exactness).
+
+*Interpretation — head-of-line blocking, measured.* `blocked_steps` is the
+number of decode steps a request sat in the batch **after producing its last
+token**, because a static batch runs until every member finishes. At batch 8 and
+above, **~18% of all decode steps are spent computing tokens that get thrown
+away**, and the worst-hit request waits **120 steps** — it finished in 8 and was
+delivered after 128. Latency p95 climbs 5.09 s → 32.11 s from batch 1 to 8 while
+throughput is flat.
+
+That is the entire argument for R3 in one row: the cost is structural, not a
+tuning problem. A batch is fixed for its lifetime, so a request that needed 8
+tokens waits on one that needed 128. No batch size fixes it — the numbers get
+worse as batch size grows.
+
+*Throughput is a separate and stranger story* — see B5. Batching buys ~8% from
+bs=1 to bs=8, with an unexplained reproducible peak at 16.
+
 ---
 
 ## 5. Open Questions
@@ -591,8 +738,13 @@ Note that the R0 records currently assert `"greedy": true`, which is not
 accurate as written. Either way the results schema should record the full
 logits-processor stack, not just the sampling mode.
 
-### Q2 — Should the parity criterion be hardware- and dtype-specific? **[OPEN, BLOCKING R2]**
-Promoted back to blocking on 2026-09-16 by B4(b). The evidence is now direct:
+### Q2 — Should the parity criterion be hardware- and dtype-specific? **[RESOLVED 2026-09-16]**
+**Resolved: two-tier.** float32 asserts exact batched-vs-unbatched equality at
+every batch size — the gate on the batching code. float16 asserts only
+finiteness; drift is reported, not asserted. Verified: float32 exact at bs
+1/2/4/8/16, float16 79/80. Propagates to R3, R4, R5 and the vLLM comparison.
+
+*Original analysis, kept for the record:*
 in float32 batched output is bit-identical to unbatched for all four test
 prompts; in float16 `long-01` diverges at token 67 purely because the batch had
 four rows instead of two. Identical padding, identical code path.
