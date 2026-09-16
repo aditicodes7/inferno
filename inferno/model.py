@@ -209,8 +209,7 @@ class InfernoQwen2:
         self.dtype = dtype
         self.rope = RotaryEmbedding(cfg.head_dim, cfg.rope_theta, device)
 
-    def _layer(self, x, lw: LayerWeights, cos, sin, cache, idx: int,
-               start: int, mask) -> torch.Tensor:
+    def _layer(self, x, lw: LayerWeights, cos, sin, write_kv, mask) -> torch.Tensor:
         cfg = self.cfg
         b, t, _ = x.shape
 
@@ -224,7 +223,7 @@ class InfernoQwen2:
         # changes once written - so rotating once on write is correct and
         # rotating again on read would double-apply it.
         q, k = apply_rope(q, k, cos, sin)
-        k_all, v_all = cache.write(idx, start, k, v)
+        k_all, v_all = write_kv(k, v)
 
         a = attention(q, repeat_kv(k_all, cfg.n_rep), repeat_kv(v_all, cfg.n_rep),
                       mask, cfg.scaling)
@@ -269,9 +268,51 @@ class InfernoQwen2:
         cos, sin = self.rope(position_ids, x.dtype)
 
         for idx, lw in enumerate(self.layers):
-            x = self._layer(x, lw, cos, sin, cache, idx, start, mask)
+            x = self._layer(x, lw, cos, sin,
+                            lambda k, v, i=idx: cache.write(i, start, k, v), mask)
 
         cache.advance(t)        # once per forward, after every layer has written
 
         x = rms_norm(x[:, -1:], self.final_norm_w, self.cfg.rms_eps)
         return F.linear(x, self.embed)      # tie_word_embeddings: no lm_head
+
+    @torch.inference_mode()
+    def forward_slots(self, input_ids: torch.Tensor, cache, slots: torch.Tensor,
+                      position_ids: torch.Tensor, key_mask: torch.Tensor,
+                      read_len: int) -> torch.Tensor:
+        """R3 decode: one token per slot, each slot at its own cache offset.
+
+        `key_mask` is [B, read_len], 1 where that slot actually holds a token.
+        Slots have independent lengths, so the shared key dimension is padded
+        to the longest live sequence and the rest is masked away.
+        """
+        x = self.embed[input_ids]
+        cos, sin = self.rope(position_ids, x.dtype)
+        mask = torch.where(
+            key_mask[:, None, None, :].bool(),
+            torch.zeros((), dtype=x.dtype, device=self.device),
+            mask_fill_value(x.dtype).to(self.device),
+        )
+        for idx, lw in enumerate(self.layers):
+            x = self._layer(
+                x, lw, cos, sin,
+                lambda k, v, i=idx: cache.write_decode(i, slots, k, v, read_len),
+                mask)
+        x = rms_norm(x[:, -1:], self.final_norm_w, self.cfg.rms_eps)
+        return F.linear(x, self.embed)
+
+    @torch.inference_mode()
+    def forward_prefill_slot(self, input_ids: torch.Tensor, cache, slot: int) -> torch.Tensor:
+        """R3 prefill: a whole prompt into one slot, in its own iteration."""
+        b, t = input_ids.shape
+        assert b == 1, "prefill runs one request at a time (see scheduler docstring)"
+        x = self.embed[input_ids]
+        position_ids = torch.arange(t, device=self.device).unsqueeze(0)
+        cos, sin = self.rope(position_ids, x.dtype)
+        mask = build_causal_mask(t, t, x.dtype, self.device)
+        for idx, lw in enumerate(self.layers):
+            x = self._layer(
+                x, lw, cos, sin,
+                lambda k, v, i=idx: cache.write_prefill(i, slot, k, v), mask)
+        x = rms_norm(x[:, -1:], self.final_norm_w, self.cfg.rms_eps)
+        return F.linear(x, self.embed)

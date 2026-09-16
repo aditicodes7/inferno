@@ -309,3 +309,44 @@ only because of left padding - then becomes all -inf, and softmax yields NaN.
 Halving leaves ~32752 of headroom while `exp(-32752 - max)` still underflows to
 exactly 0 in the float32 softmax, so masked positions contribute nothing, which
 is the entire requirement. See `docs/bugs.md` B4 for the full trace.
+
+---
+
+## 2026-09-16 — R3: FCFS, prefill owns its iteration, slot-based cache
+
+**Chosen:** FCFS admission (only the queue head is considered); prefill runs in
+its own iteration, stalling running requests for one step; a slot-based KV cache
+with independent per-slot lengths.
+
+**Rejected:** scanning past the queue head for a request that fits (starves the
+head, and a starved request raises nothing); chunked prefill (the right answer
+eventually, but it interacts with R4's allocator - see Q7); one cache object per
+sequence (simpler, but gives up batched attention).
+
+**Why the cache had to change:** R1/R2 carry one `length` for the whole batch,
+which works only because left-padding right-aligns every sequence. A request
+admitted at iteration 50 has 0 generated tokens while its batch-mates have 50 -
+they are never aligned again. Per-slot lengths are forced. The consequence is
+that every slot reserves `max_len` regardless of occupancy, making the waste
+structural. That is exactly what R4 removes.
+
+**Measured cost of prefill-owns-its-iteration:** at 0.3 req/s static batching
+beats continuous on TTFT p50, 0.034 s vs 0.102 s. The dedicated prefill
+iteration is not free and the numbers say so.
+
+---
+
+## 2026-09-16 — The scheduler owns no tensors
+
+**Chosen:** `inferno/scheduler.py` handles state transitions and slot ownership
+only. The engine owns every tensor. The sole thing crossing the boundary is a
+slot index.
+
+**Rejected:** a scheduler that also manages the KV cache directly.
+
+**Why:** all three R3 failure modes are silent - a slot reused one iteration
+early is corruption, a leaked slot is a hang, a starved request raises nothing.
+None of them produce an exception, and none of them need a model to test. The
+separation let `tests/test_scheduler.py` run in 0.01s and catch B6 before the
+engine existed at all. Every other bug in this project so far was found by a
+multi-minute benchmark run.

@@ -79,3 +79,78 @@ class KVCache:
         This is the number R4 is built to improve.
         """
         return self.length / self.max_len if self.max_len else 0.0
+
+
+class SlotKVCache:
+    """R3: per-slot KV storage with INDEPENDENT lengths.
+
+    R1/R2's `KVCache` carries one `length` for the whole batch. That works only
+    because left-padding right-aligns every sequence so they all write at the
+    same offset. Continuous batching destroys that: a request admitted at
+    iteration 50 has 0 generated tokens while its batch-mates have 50, and they
+    are never aligned again. So length becomes per slot.
+
+    A sequence owns a slot for its lifetime. When it finishes the slot is freed
+    and reused. Every slot reserves `max_len` whether it needs it or not, so a
+    slot holding an 8-token sequence costs exactly as much as one holding 500.
+    That waste is now structural rather than incidental, and it is what R4's
+    block allocator exists to remove.
+    """
+
+    def __init__(self, n_layers: int, n_kv_heads: int, head_dim: int,
+                 n_slots: int, max_len: int, dtype: torch.dtype,
+                 device: str) -> None:
+        shape = (n_slots, n_kv_heads, max_len, head_dim)
+        self.k = [torch.zeros(shape, dtype=dtype, device=device)
+                  for _ in range(n_layers)]
+        self.v = [torch.zeros(shape, dtype=dtype, device=device)
+                  for _ in range(n_layers)]
+        self.n_slots = n_slots
+        self.max_len = max_len
+        self.device = device
+        self.lengths = torch.zeros(n_slots, dtype=torch.long, device=device)
+
+    # -- slot lifecycle ---------------------------------------------------
+
+    def reset(self, slot: int) -> None:
+        """Release a slot. The stale K/V are never read again because the key
+        mask is built from `lengths`, so zeroing the tensors is unnecessary -
+        and skipping it keeps slot reuse O(1) instead of O(max_len)."""
+        self.lengths[slot] = 0
+
+    # -- writes -----------------------------------------------------------
+
+    def write_prefill(self, layer: int, slot: int, k: torch.Tensor,
+                      v: torch.Tensor):
+        """Write a whole prompt into one slot. k/v are [1, n_kv, T, head_dim]."""
+        t = k.shape[2]
+        if t > self.max_len:
+            raise ValueError(f"prompt of {t} exceeds slot capacity {self.max_len}")
+        self.k[layer][slot, :, :t] = k[0]
+        self.v[layer][slot, :, :t] = v[0]
+        return self.k[layer][slot:slot + 1, :, :t], self.v[layer][slot:slot + 1, :, :t]
+
+    def write_decode(self, layer: int, slots: torch.Tensor, k: torch.Tensor,
+                     v: torch.Tensor, read_len: int):
+        """Append one token per slot, each at ITS OWN offset, then read back.
+
+        `slots` is [B]; k/v are [B, n_kv, 1, head_dim]. The scatter uses two
+        index tensors so every row lands at a different position - that is the
+        whole difference from R2, where one offset served the entire batch.
+        """
+        pos = self.lengths[slots]
+        self.k[layer][slots, :, pos] = k[:, :, 0]
+        self.v[layer][slots, :, pos] = v[:, :, 0]
+        return self.k[layer][slots][:, :, :read_len], self.v[layer][slots][:, :, :read_len]
+
+    def advance(self, slots: torch.Tensor) -> None:
+        self.lengths[slots] += 1
+
+    # -- measurement ------------------------------------------------------
+
+    def bytes_allocated(self) -> int:
+        return sum(t.numel() * t.element_size() for t in self.k + self.v)
+
+    def utilisation(self) -> float:
+        """Fraction of reserved KV holding a real token, across all slots."""
+        return float(self.lengths.sum()) / (self.n_slots * self.max_len)

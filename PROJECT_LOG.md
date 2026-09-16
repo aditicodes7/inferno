@@ -7,7 +7,7 @@ Phases map to the rung plan in `CLAUDE.md`: R0 baseline, R1 own attention + KV
 cache, R2 static batching, R3 continuous batching, R4 paged KV cache,
 R5 prefix caching.
 
-**Status: R2 complete and accepted. R0, R1, R2 done; R3 next.**
+**Status: R3 complete and accepted. R0–R3 done; R4 (the hardest rung) next.**
 
 ---
 
@@ -130,6 +130,33 @@ The hardware caveat (Mac/MPS, not GPU) is a banner at the top, not a footnote.
 
 Published: https://claude.ai/artifact/RpzegYya34hiJMEjD7XWiX
 
+### 2026-09-16 — R3 policy: FCFS, prefill owns its iteration, slot-based cache
+**Chosen:** (a) **FCFS** — only the queue head is ever considered for
+admission. (b) **Prefill gets its own iteration**; admitting a request stalls
+every running request for one step. (c) **Slot-based cache** with per-slot
+lengths.
+
+**Rejected:** (a) scanning past the head for a request that happens to fit —
+that is exactly what starves the head forever, and a starved request raises
+nothing; (b) chunked prefill, which mixes a joining request's prompt into the
+decode batch — the right answer eventually, and a different rung's problem;
+(c) one `KVCache` per sequence, which is simpler but gives up batched attention
+entirely.
+
+**Why (c) specifically:** R1/R2's cache carries one `length` for the whole
+batch, which works *only* because left-padding right-aligns every sequence.
+Continuous batching destroys that — a request admitted at iteration 50 has 0
+generated tokens while its batch-mates have 50, and they are never aligned
+again. Length has to become per-slot. Every slot then reserves `max_len`
+regardless of what it holds, so an 8-token sequence costs the same as a
+500-token one. **That waste is now structural rather than incidental, which is
+precisely the thing R4's block allocator removes.**
+
+**Cost of (b), measured:** at low arrival rates static batching actually beats
+continuous on TTFT p50 (0.034 s vs 0.102 s at 0.3 req/s), because a static batch
+prefills inside the batch while continuous spends a whole dedicated iteration on
+it. The dedicated prefill iteration is not free and the numbers say so.
+
 ---
 
 ## 2. Build Log
@@ -209,6 +236,29 @@ it. Details in §B4.
 Acceptance: `INFERNO_FULL=1 pytest tests/test_batch_parity.py` — **10 passed**.
 float32 exact at batch sizes 1/2/4/8/16 across 16 mixed-length prompts;
 float16 79/80 exact with one drift (`long-04` at bs=4, token 37).
+
+### Phase 3 (R3) — continuous batching — 2026-09-16 — **COMPLETE, ACCEPTED**
+
+Built: `inferno/scheduler.py` (154 lines, no tensors at all),
+`SlotKVCache` in `inferno/cache.py`, `forward_slots` /
+`forward_prefill_slot` in `inferno/model.py`, `inferno/continuous_engine.py`,
+`tests/test_scheduler.py` (10 tests), `tests/test_continuous_parity.py`,
+`bench/run_continuous.py` (the arrival-driven harness the final deliverables
+also need).
+
+Worked first try: the per-slot scatter (`self.k[layer][slots, :, pos]` with two
+index tensors, so every row lands at its own offset — the whole difference from
+R2, where one offset served the batch); the key mask built from per-slot
+lengths; refactoring `_layer` to take a KV-writer callable so one 24-layer loop
+serves both cache types **without regressing R1 or R2 parity** (12 passed);
+R3 parity on the first run — 10 passed across 3 arrival patterns × 3 slot counts.
+
+Did **not** work first try: **the scheduler assigned slots in the wrong place**
+(§B6). Caught by a unit test, before any GPU time was spent.
+
+Acceptance: `pytest tests/test_scheduler.py tests/test_continuous_parity.py` —
+**20 passed**. Output is identical whether a request arrives at t=0, staggered,
+or in a late burst, at 1, 2 and 4 slots.
 
 ---
 
@@ -543,6 +593,32 @@ in cache and the fixed per-step cost is not being amortised. This is exactly the
 kind of honest negative result the gap analysis is for, and it is a strong reason
 to re-run the batch-size sweep on rented GPU hardware before drawing conclusions.
 
+### B6 — the scheduler reserved slots too late to be usable
+**2026-09-16. Found by a unit test before the engine existed. Fixed.**
+
+*Symptom:* `test_slot_is_freed_when_a_request_finishes_and_is_reused` failed on
+`assert d.prefill.slot == 0` — the slot was `None` on a request the scheduler
+had just decided to prefill.
+
+*Root cause:* `schedule()` returned "prefill this request" and `on_prefilled()`
+assigned the slot afterwards. But **the engine needs the slot to write K/V into
+before it can run the forward pass.** As written, the scheduler was unusable by
+the thing it existed to drive — the API was wrong, not the state machine.
+
+*Fix:* reserve the slot inside `schedule()` and carry it on the decision, made
+idempotent so calling `schedule()` twice without acting cannot consume two
+slots. Plus a branch in `finish()` for a request that reserved a slot and was
+never prefilled, which would otherwise leak it silently.
+
+*Why it matters beyond the fix:* this is the first bug in the project caught by
+a **unit test rather than a benchmark**, and it cost seconds instead of the
+minutes-long parity runs everything else has needed. The scheduler was written
+to own no tensors specifically so its ugly cases — slot reuse, leaked slots,
+starvation — could be tested without a model. That separation paid for itself
+immediately. All three of the R3 failure modes predicted at the start of the
+project are silent: a slot reused one iteration early is corruption, a leaked
+slot is a hang, a starved request raises nothing.
+
 ---
 
 ## 4. Benchmark Results
@@ -682,6 +758,61 @@ worse as batch size grows.
 *Throughput is a separate and stranger story* — see B5. Batching buys ~8% from
 bs=1 to bs=8, with an unexplained reproducible peak at 16.
 
+### R3 — continuous batching vs static, under real arrivals — **ACCEPTED**
+**Hardware: MacBook, Apple Silicon, MPS, float16. NOT a GPU number.**
+Poisson arrivals, 12–16 requests, `max_new_tokens=40`, 8 slots vs static
+batch size 8, budget **p95 TTFT < 500 ms**. The static baseline is R2's policy
+made arrival-aware: take whatever has arrived, run that batch to completion,
+then look again.
+
+| rate (req/s) | continuous tok/s | cont. p95 TTFT | | static tok/s | static p95 TTFT | |
+|---|---|---|---|---|---|---|
+| 0.2 | 6.53 | 0.160 s | OK | 6.53 | 0.041 s | OK |
+| 0.3 | 9.69 | 0.095 s | OK | 9.69 | 0.162 s | OK |
+| 0.4 | 14.35 | 0.137 s | OK | 14.26 | **0.501 s** | MISS |
+| 0.8 | 27.12 | 0.100 s | OK | 26.43 | 1.258 s | MISS |
+| 1.6 | 38.76 | **0.433 s** | OK | 35.79 | 3.598 s | MISS |
+| 2.0 | 40.35 | 1.863 s | MISS | 38.47 | 3.406 s | MISS |
+| 3.2 | 43.15 | 3.740 s | MISS | 41.10 | 6.314 s | MISS |
+
+**Headline — sustainable arrival rate at p95 TTFT < 500 ms:**
+
+```
+static batching      0.3 req/s
+continuous batching  1.6 req/s      5.3x
+```
+
+Bursty arrivals (18 requests, three tight bursts): continuous **44.60 tok/s**
+vs static 37.77 (**+18%**), TTFT p50 **0.279 s vs 2.923 s** (10.5× better).
+Bursts are where the gap is widest, which is what you would expect — a burst is
+precisely a pile of requests arriving while a batch is already running.
+
+Raw: [`r3_continuous_mps_poisson_…`](results/mac/) · [`r3_continuous_mps_burst_…`](results/mac/)
+
+*Correctness proof:* float32 output identical to serving each request entirely
+alone, across arrival patterns {all-at-once, staggered, late burst} × slot
+counts {1, 2, 4}. 20 tests passed.
+
+*Interpretation.* Raw throughput barely moves (35.79 → 38.76 tok/s at rate 1.6,
++8%). **The win is almost entirely in latency**, and that is the correct shape
+for this change: continuous batching does not make the GPU faster, it stops
+requests waiting on strangers. Static batching's TTFT collapses as soon as
+arrivals overlap a running batch, because a request arriving one iteration late
+waits for the entire batch to drain — at rate 1.6 that is 3.6 s at p95 against
+continuous's 0.43 s.
+
+*The R2 blocking tail is gone by construction, not by tuning.* R2 wasted ~18% of
+all decode steps computing tokens that were discarded, with the worst request
+blocked 120 steps. In R3 a decode iteration contains exactly the running set, and
+every token computed for a running request is kept, so wasted steps are **0 by
+construction**. That is a property of the code, not a measurement.
+
+*Honest cost.* At rates the system is not saturated at (0.2–0.3 req/s), static
+has *better* TTFT p50 — 0.034 s against 0.102 s — because continuous spends a
+whole dedicated iteration on prefill while static prefills inside its batch.
+Continuous batching is not free; it is a trade that only pays once arrivals
+overlap.
+
 ---
 
 ## 5. Open Questions
@@ -780,6 +911,14 @@ real allocation, and HF's eager path may avoid or reuse it; (3) `cos`/`sin` are
 recomputed per forward rather than cached; (4) fp32 softmax over a
 `14 × 475 × 475` tensor. Rule 8 applies: profile before touching any of it.
 Not on the R1 critical path — parity is accepted and the number is recorded.
+
+### Q7 — Does the dedicated prefill iteration need replacing with chunked prefill? **[OPEN, R4/R5 follow-up]**
+Measured cost: at low arrival rates static beats continuous on TTFT p50
+(0.034 s vs 0.102 s) purely because prefill owns a whole iteration and stalls
+every running request. Chunked prefill — splitting a prompt across several
+iterations and mixing it into the decode batch — is what production engines do
+instead. It interacts directly with R4's block allocator, so it is worth
+revisiting there rather than retrofitting now.
 
 ### Q3 — Was B2 actually Metal shader caching? **[OPEN, low priority]**
 Never directly proven. Clearing the Metal cache and re-running would settle it.

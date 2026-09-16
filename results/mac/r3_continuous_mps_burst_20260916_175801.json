@@ -1,0 +1,341 @@
+{
+  "rung": "R3",
+  "run_at": "2026-09-16T17:57:31",
+  "config": {
+    "pattern": "burst",
+    "n_requests": 18,
+    "max_new_tokens": 40,
+    "slots": 8,
+    "batch_size": 8,
+    "budget_s": 0.5,
+    "device": "mps",
+    "dtype": "float16",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "prompts_version": 1
+  },
+  "environment": {
+    "torch": "2.14.0",
+    "transformers": "5.17.0",
+    "platform": "macOS-14.5-arm64-arm-64bit"
+  },
+  "by_rate": {
+    "1.0": {
+      "continuous": {
+        "n_requests": 18,
+        "tokens_generated": 609,
+        "wall_clock_s": 13.654902208999374,
+        "throughput_tok_s": 44.599367368492295,
+        "ttft_p50_s": 0.27878617788869103,
+        "ttft_p95_s": 4.005968186850794,
+        "latency_p50_s": 6.4592527529791015,
+        "latency_p95_s": 7.985665038460537,
+        "meets_budget": false,
+        "frac_under_budget": 0.7222222222222222,
+        "records": [
+          {
+            "id": "r0",
+            "arrival": 0.04222109257625241,
+            "n_prompt": 36,
+            "n_generated": 8,
+            "ttft_s": 0.11722099042345101,
+            "latency_s": 1.0561385744240428
+          },
+          {
+            "id": "r1",
+            "arrival": 0.037897720147015125,
+            "n_prompt": 36,
+            "n_generated": 23,
+            "ttft_s": 0.148739154852734,
+            "latency_s": 2.783935904853166
+          },
+          {
+            "id": "r2",
+            "arrival": 0.02102857904154225,
+            "n_prompt": 36,
+            "n_generated": 36,
+            "ttft_s": 0.1936759629581662,
+            "latency_s": 4.936557628958524
+          },
+          {
+            "id": "r3",
+            "arrival": 0.012945837514648168,
+            "n_prompt": 37,
+            "n_generated": 40,
+            "ttft_s": 0.2586867454850522,
+            "latency_s": 5.6948749544857
+          },
+          {
+            "id": "r4",
+            "arrival": 0.025563736068430428,
+            "n_prompt": 34,
+            "n_generated": 40,
+            "ttft_s": 0.30064055593117156,
+            "latency_s": 5.682257055931918
+          },
+          {
+            "id": "r5",
+            "arrival": 0.020246706872520715,
+            "n_prompt": 35,
+            "n_generated": 40,
+            "ttft_s": 0.36074083512766375,
+            "latency_s": 5.687574085127827
+          },
+          {
+            "id": "r6",
+            "arrival": 3.0391899294517386,
+            "n_prompt": 39,
+            "n_generated": 40,
+            "ttft_s": 0.17080365354840277,
+            "latency_s": 6.86988502854828
+          },
+          {
+            "id": "r7",
+            "arrival": 3.0151656363039465,
+            "n_prompt": 35,
+            "n_generated": 40,
+            "ttft_s": 0.24633978069613383,
+            "latency_s": 6.893909321696073
+          },
+          {
+            "id": "r8",
+            "arrival": 3.023829847707618,
+            "n_prompt": 38,
+            "n_generated": 14,
+            "ttft_s": 0.29888561029232985,
+            "latency_s": 2.483843194292006
+          },
+          {
+            "id": "r9",
+            "arrival": 3.0291691019727516,
+            "n_prompt": 43,
+            "n_generated": 40,
+            "ttft_s": 0.353698481027255,
+            "latency_s": 6.879905856027268
+          },
+          {
+            "id": "r10",
+            "arrival": 3.0454056442597666,
+            "n_prompt": 37,
+            "n_generated": 35,
+            "ttft_s": 1.9941719807399987,
+            "latency_s": 7.802656105740176
+          },
+          {
+            "id": "r11",
+            "arrival": 3.0252343427908697,
+            "n_prompt": 38,
+            "n_generated": 40,
+            "ttft_s": 2.5684541992087846,
+            "latency_s": 9.022715657209258
+          },
+          {
+            "id": "r12",
+            "arrival": 6.0140918922199855,
+            "n_prompt": 38,
+            "n_generated": 40,
+            "ttft_s": 0.12102885778018369,
+            "latency_s": 6.47951519077993
+          },
+          {
+            "id": "r13",
+            "arrival": 6.037790210207861,
+            "n_prompt": 38,
+            "n_generated": 40,
+            "ttft_s": 0.14479470679212447,
+            "latency_s": 6.455816872792054
+          },
+          {
+            "id": "r14",
+            "arrival": 6.0309184498337665,
+            "n_prompt": 43,
+            "n_generated": 40,
+            "ttft_s": 0.20158180016639093,
+            "latency_s": 6.462688633166149
+          },
+          {
+            "id": "r15",
+            "arrival": 6.012525317068122,
+            "n_prompt": 37,
+            "n_generated": 40,
+            "ttft_s": 3.9803029329314255,
+            "latency_s": 7.641293307931863
+          },
+          {
+            "id": "r16",
+            "arrival": 6.045487312798412,
+            "n_prompt": 39,
+            "n_generated": 40,
+            "ttft_s": 4.000263562201201,
+            "latency_s": 7.608331312201574
+          },
+          {
+            "id": "r17",
+            "arrival": 6.049139273801883,
+            "n_prompt": 39,
+            "n_generated": 13,
+            "ttft_s": 4.038294393198486,
+            "latency_s": 5.861374518197737
+          }
+        ]
+      },
+      "static": {
+        "n_requests": 18,
+        "tokens_generated": 609,
+        "wall_clock_s": 16.12320650000038,
+        "throughput_tok_s": 37.77164300413728,
+        "ttft_p50_s": 2.9225853377185467,
+        "ttft_p95_s": 5.14983413500347,
+        "latency_p50_s": 8.009300819618751,
+        "latency_p95_s": 10.109332469052832,
+        "meets_budget": false,
+        "frac_under_budget": 0.05555555555555555,
+        "records": [
+          {
+            "id": "r3",
+            "arrival": 0.012945837514648168,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 0.03459117258614296,
+            "latency_s": 1.3560253294857336
+          },
+          {
+            "id": "r5",
+            "arrival": 0.020246706872520715,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 1.4599956483279504,
+            "latency_s": 5.799091001128082
+          },
+          {
+            "id": "r2",
+            "arrival": 0.02102857904154225,
+            "n_prompt": 0,
+            "n_generated": 36,
+            "ttft_s": 1.4592137761589288,
+            "latency_s": 5.798309128959061
+          },
+          {
+            "id": "r4",
+            "arrival": 0.025563736068430428,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 1.4546786191320407,
+            "latency_s": 5.793773971932173
+          },
+          {
+            "id": "r1",
+            "arrival": 0.037897720147015125,
+            "n_prompt": 0,
+            "n_generated": 23,
+            "ttft_s": 1.442344635053456,
+            "latency_s": 5.781439987853588
+          },
+          {
+            "id": "r0",
+            "arrival": 0.04222109257625241,
+            "n_prompt": 0,
+            "n_generated": 8,
+            "ttft_s": 1.4380212626242186,
+            "latency_s": 5.777116615424351
+          },
+          {
+            "id": "r7",
+            "arrival": 3.0151656363039465,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 2.9346214237964108,
+            "latency_s": 8.021336905696616
+          },
+          {
+            "id": "r8",
+            "arrival": 3.023829847707618,
+            "n_prompt": 0,
+            "n_generated": 14,
+            "ttft_s": 2.9259572123927393,
+            "latency_s": 8.012672694292945
+          },
+          {
+            "id": "r11",
+            "arrival": 3.0252343427908697,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 2.9245527173094876,
+            "latency_s": 8.011268199209692
+          },
+          {
+            "id": "r9",
+            "arrival": 3.0291691019727516,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 2.9206179581276057,
+            "latency_s": 8.00733344002781
+          },
+          {
+            "id": "r6",
+            "arrival": 3.0391899294517386,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 2.9105971306486187,
+            "latency_s": 7.997312612548823
+          },
+          {
+            "id": "r10",
+            "arrival": 3.0454056442597666,
+            "n_prompt": 0,
+            "n_generated": 35,
+            "ttft_s": 2.9043814158405907,
+            "latency_s": 7.991096897740796
+          },
+          {
+            "id": "r15",
+            "arrival": 6.012525317068122,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 5.151165723882554,
+            "latency_s": 10.110664057931917
+          },
+          {
+            "id": "r12",
+            "arrival": 6.0140918922199855,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 5.14959914873069,
+            "latency_s": 10.109097482780053
+          },
+          {
+            "id": "r14",
+            "arrival": 6.0309184498337665,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 5.132772591116909,
+            "latency_s": 10.092270925166272
+          },
+          {
+            "id": "r13",
+            "arrival": 6.037790210207861,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 5.125900830742815,
+            "latency_s": 10.085399164792177
+          },
+          {
+            "id": "r16",
+            "arrival": 6.045487312798412,
+            "n_prompt": 0,
+            "n_generated": 40,
+            "ttft_s": 5.118203728152264,
+            "latency_s": 10.077702062201627
+          },
+          {
+            "id": "r17",
+            "arrival": 6.049139273801883,
+            "n_prompt": 0,
+            "n_generated": 13,
+            "ttft_s": 5.114551767148793,
+            "latency_s": 10.074050101198155
+          }
+        ]
+      }
+    }
+  }
+}
