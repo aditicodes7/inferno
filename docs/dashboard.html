@@ -167,6 +167,11 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
       <div class="d">TTFT p95 vs HuggingFace &mdash; <em>the real gap</em></div>
     </div>
     <div class="tile">
+      <div class="k">Decode steps wasted</div>
+      <div class="v">17.9<span class="u">%</span></div>
+      <div class="d">at batch 8 &mdash; worst request blocked <em>120 steps</em></div>
+    </div>
+    <div class="tile">
       <div class="k">KV cache utilisation</div>
       <div class="v">85.8<span class="u">%</span></div>
       <div class="d">worst single request <em>26.2%</em></div>
@@ -203,6 +208,39 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
     prompts decode slower for every implementation &mdash; that is the KV cache getting more
     expensive to read on every single step, showing up unprompted in the baseline.</p>
     <div id="c3"></div>
+  </div>
+
+  <h2>R2 &mdash; static batching, and why it is not enough</h2>
+  <p class="note">A static batch runs until <em>every</em> sequence in it finishes. A request
+  that needed 8 tokens sits in the batch for all 128 steps, producing nothing, holding its
+  cache slot, and not returning to the caller. Its latency is set by the slowest request it
+  happened to be batched with. Prompts are <strong>not</strong> sorted by length &mdash; sorting
+  would flatten the tail and hide the effect this rung exists to demonstrate.</p>
+
+  <div class="chart">
+    <h3>Head-of-line blocking &mdash; every request at batch size 8</h3>
+    <p class="cap">Decode steps each request spent in the batch <em>after</em> producing its
+    last token, sorted descending. At batch 8 and above <strong>~18% of all decode steps
+    compute tokens that are thrown away</strong>, and the worst-hit request waits 120 steps:
+    it finished in 8 and was delivered after 128. No batch size fixes this &mdash; the numbers
+    get worse as batch size grows, because the cause is structural. This chart is the entire
+    argument for R3.</p>
+    <div id="c6"></div>
+    <div class="legend">
+      <span><i style="background:var(--s1)"></i>short</span>
+      <span><i style="background:var(--s3)"></i>medium</span>
+      <span><i style="background:var(--s2)"></i>long</span>
+    </div>
+  </div>
+
+  <div class="chart">
+    <h3>Throughput vs batch size</h3>
+    <p class="cap">The textbook argument says batching decode is nearly free, because the
+    weights are loaded once per step regardless of batch size. It does not hold here: from
+    batch 1 to 8, throughput moves 28.30 &rarr; 30.53 tok/s, about +8%. Then batch 16 triples
+    it and batch 20 falls back &mdash; a reproducible, isolated peak measured at 96.96, 97.06
+    and 99.42 tok/s across three runs, and still unexplained (B5).</p>
+    <div id="c5"></div>
   </div>
 
   <h2>Why R4 exists</h2>
@@ -251,10 +289,25 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
         <strong>&ldquo;Greedy&rdquo; is not a complete specification of a decoding procedure.</strong></td>
         <td>resolved</td></tr>
       <tr><td>B4</td>
-        <td>R2 batch parity fails at batch size 4, passes at 1 and 2. Two failure shapes at once:
-        one batch emits token&nbsp;0 repeatedly, another drifts after 67 exact tokens.</td>
-        <td>Tracks the <em>padding ratio</em>, not the batch size &mdash; failure appears when
-        ~80-token prompts share a batch with ~480-token ones. Under investigation.</td>
+        <td>R2 batch parity failed at batch size 4 while passing at 1 and 2 &mdash; one sequence
+        emitting token&nbsp;0 forever, another drifting after 67 exact tokens.</td>
+        <td>The additive mask used <code>finfo.min</code>. float16&rsquo;s most negative finite value
+        is &minus;65504, so adding any score past about &minus;16 rounds off the end of the range to
+        &minus;inf; scores reach &plusmn;225 by layer&nbsp;8. A fully-masked row &mdash; which exists
+        only because of left padding &mdash; becomes all &minus;inf, and softmax gives
+        <code>exp(&minus;inf &minus; &minus;inf)</code> = NaN. It escaped into real tokens because pad K/V
+        share the cache and <strong>0 &times; NaN = NaN</strong>. Fixed with <code>finfo.min / 2</code>.
+        Two wrong turns first: a probe using a score of &minus;5 (which rounds back, and
+        &ldquo;proved&rdquo; no overflow), and a fix that moved the NaN from layer 1 to layer 8
+        without removing it.</td>
+        <td>resolved</td></tr>
+      <tr><td>B5</td>
+        <td>Throughput vs batch size is non-monotonic: flat from 1&ndash;8, triples at 16, falls
+        back at 20.</td>
+        <td>Reproducible across three runs (&plusmn;2.5%) and not explained by batch composition
+        &mdash; weighted by padded width, batch 16 does <em>more</em> attention work than batch 12
+        while taking 2.6&times; less wall time. Leading hypothesis is MPS matmul kernel selection at a
+        16-wide tile boundary. Not confirmed.</td>
         <td>open</td></tr>
     </tbody>
   </table></div>
@@ -268,10 +321,18 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
       recomputed per forward; fp32 softmax over a 14&times;475&times;475 tensor. Profile before
       touching any of it.</div></div>
     <div class="qi"><div class="qh">Should the parity criterion be hardware- and dtype-specific?
+      <span class="tag" style="color:var(--done)">resolved &mdash; two-tier</span></div>
+      <div class="qb">float32 asserts exact batched-vs-unbatched equality at every batch size:
+      that is the gate on the batching code, and it passes. float16 asserts only that nothing
+      becomes NaN; drift is reported, not asserted, because differently shaped matmuls reduce in
+      different orders and greedy decoding amplifies the last bit. Verified float32 exact at
+      bs&nbsp;1/2/4/8/16; float16 79/80.</div></div>
+    <div class="qi"><div class="qh">Why does throughput peak at exactly batch 16?
       <span class="tag" style="color:var(--active)">open</span></div>
-      <div class="qb">Teacher-forced agreement was exact, but free-running fp16 parity across
-      <em>different kernels</em> remains unproven. If it cannot survive a kernel change it cannot
-      survive the move to rented GPUs either.</div></div>
+      <div class="qb">Per-step cost halves at 16 while the work doubles, then reverts at 20.
+      Next test: sweep 13&ndash;18 with fixed-length prompts so composition is held constant. If
+      the dip sits exactly at 16, it is kernel selection. Worth re-running the whole sweep on GPU
+      before drawing any conclusion about batching.</div></div>
     <div class="qi"><div class="qh">Was the B2 tail actually Metal shader caching?
       <span class="tag" style="color:var(--idle)">low priority</span></div>
       <div class="qb">Never directly proven. Clearing the Metal cache and re-running would settle it.</div></div>
@@ -287,6 +348,7 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
 <div id="tip" role="status"></div>
 
 <script>
+const R2 = {"bs":[1,2,4,8,12,16,20],"toks":[28.3,30.16,30.6,30.53,37.06,97.06,68.36],"wasted":[0.0,6.5,10.8,17.9,18.0,17.8,17.9],"p95":[5.09,9.34,17.74,32.18,39.2,25.31,33.77],"blkmax":[0,95,115,120,120,120,120],"blocked8":[{"id":"short-00","cat":"short","b":120,"g":8,"d":128},{"id":"short-17","cat":"short","b":115,"g":13,"d":128},{"id":"short-08","cat":"short","b":114,"g":14,"d":128},{"id":"short-01","cat":"short","b":105,"g":23,"d":128},{"id":"short-18","cat":"short","b":95,"g":33,"d":128},{"id":"short-10","cat":"short","b":93,"g":35,"d":128},{"id":"short-02","cat":"short","b":92,"g":36,"d":128},{"id":"short-09","cat":"short","b":82,"g":46,"d":128},{"id":"short-16","cat":"short","b":76,"g":52,"d":128},{"id":"short-03","cat":"short","b":66,"g":62,"d":128},{"id":"short-11","cat":"short","b":60,"g":68,"d":128},{"id":"short-12","cat":"short","b":58,"g":70,"d":128},{"id":"short-05","cat":"short","b":25,"g":103,"d":128},{"id":"medium-13","cat":"medium","b":23,"g":105,"d":128},{"id":"short-14","cat":"short","b":19,"g":109,"d":128},{"id":"short-04","cat":"short","b":0,"g":128,"d":128},{"id":"short-06","cat":"short","b":0,"g":128,"d":128},{"id":"short-07","cat":"short","b":0,"g":128,"d":128},{"id":"short-13","cat":"short","b":0,"g":128,"d":128},{"id":"short-15","cat":"short","b":0,"g":128,"d":128},{"id":"short-19","cat":"short","b":0,"g":128,"d":128},{"id":"medium-00","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-01","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-02","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-03","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-04","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-05","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-06","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-07","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-08","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-09","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-10","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-11","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-12","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-14","cat":"medium","b":0,"g":128,"d":128},{"id":"long-00","cat":"long","b":0,"g":128,"d":128},{"id":"long-01","cat":"long","b":0,"g":128,"d":128},{"id":"long-02","cat":"long","b":0,"g":128,"d":128},{"id":"long-03","cat":"long","b":0,"g":128,"d":128},{"id":"long-04","cat":"long","b":0,"g":128,"d":128},{"id":"long-05","cat":"long","b":0,"g":128,"d":128},{"id":"long-06","cat":"long","b":0,"g":128,"d":128},{"id":"long-07","cat":"long","b":0,"g":128,"d":128},{"id":"long-08","cat":"long","b":0,"g":128,"d":128},{"id":"long-09","cat":"long","b":0,"g":128,"d":128},{"id":"long-10","cat":"long","b":0,"g":128,"d":128},{"id":"long-11","cat":"long","b":0,"g":128,"d":128},{"id":"long-12","cat":"long","b":0,"g":128,"d":128},{"id":"long-13","cat":"long","b":0,"g":128,"d":128},{"id":"long-14","cat":"long","b":0,"g":128,"d":128}]};
 const D = {"runs":{"r0_sdpa":{"file":"r0_baseline_mps_sdpa_20260916_114721.json","rung":"R0","device":"mps","dtype":"torch.float16","attn":"sdpa","decode_tok_s":36.288076640549725,"ttft_p50_ms":54.11824950033406,"ttft_p95_ms":72.99906670014025,"peak_rss_mb":1997.668352,"by_cat":{"long":34.95343910680475,"medium":37.54209804102743,"short":36.448293607685024},"kv_util":null},"r0_eager":{"file":"r0_baseline_mps_eager_20260916_115052.json","rung":"R0","device":"mps","dtype":"torch.float16","attn":"eager","decode_tok_s":26.772099063619855,"ttft_p50_ms":51.030916000399884,"ttft_p95_ms":78.05582285027411,"peak_rss_mb":2422.063104,"by_cat":{"long":23.734324538101642,"medium":28.864687288528998,"short":28.378000342968498},"kv_util":null},"r1_inferno":{"file":"r1_inferno_mps_20260916_115813.json","rung":"R1","device":"mps","dtype":"torch.float16","attn":"eager","decode_tok_s":29.208319795458742,"ttft_p50_ms":93.71810350057785,"ttft_p95_ms":358.8082517490875,"peak_rss_mb":1734.377472,"by_cat":{"long":26.962637816999155,"medium":30.017910826516264,"short":32.2387266201616},"kv_util":0.8579564714004415}},"kv":[{"id":"short-00","cat":"short","gen":8,"ptok":36,"kvu":26.2},{"id":"short-17","cat":"short","gen":13,"ptok":39,"kvu":30.5},{"id":"short-08","cat":"short","gen":14,"ptok":38,"kvu":30.7},{"id":"short-01","cat":"short","gen":23,"ptok":36,"kvu":35.4},{"id":"short-18","cat":"short","gen":33,"ptok":36,"kvu":41.5},{"id":"short-10","cat":"short","gen":35,"ptok":37,"kvu":43.0},{"id":"short-02","cat":"short","gen":36,"ptok":36,"kvu":43.3},{"id":"short-09","cat":"short","gen":46,"ptok":43,"kvu":51.5},{"id":"short-16","cat":"short","gen":52,"ptok":39,"kvu":53.9},{"id":"short-03","cat":"short","gen":62,"ptok":37,"kvu":59.4},{"id":"short-11","cat":"short","gen":68,"ptok":38,"kvu":63.3},{"id":"short-12","cat":"short","gen":70,"ptok":38,"kvu":64.5},{"id":"short-05","cat":"short","gen":103,"ptok":35,"kvu":84.0},{"id":"medium-13","cat":"medium","gen":105,"ptok":65,"kvu":87.6},{"id":"short-14","cat":"short","gen":109,"ptok":43,"kvu":88.3},{"id":"short-04","cat":"short","gen":128,"ptok":34,"kvu":99.4},{"id":"short-06","cat":"short","gen":128,"ptok":39,"kvu":99.4},{"id":"short-07","cat":"short","gen":128,"ptok":35,"kvu":99.4},{"id":"short-13","cat":"short","gen":128,"ptok":38,"kvu":99.4},{"id":"short-15","cat":"short","gen":128,"ptok":37,"kvu":99.4},{"id":"short-19","cat":"short","gen":128,"ptok":36,"kvu":99.4},{"id":"medium-00","cat":"medium","gen":128,"ptok":87,"kvu":99.5},{"id":"medium-01","cat":"medium","gen":128,"ptok":73,"kvu":99.5},{"id":"medium-02","cat":"medium","gen":128,"ptok":79,"kvu":99.5},{"id":"medium-03","cat":"medium","gen":128,"ptok":62,"kvu":99.5},{"id":"medium-04","cat":"medium","gen":128,"ptok":72,"kvu":99.5},{"id":"medium-05","cat":"medium","gen":128,"ptok":73,"kvu":99.5},{"id":"medium-06","cat":"medium","gen":128,"ptok":64,"kvu":99.5},{"id":"medium-07","cat":"medium","gen":128,"ptok":61,"kvu":99.5},{"id":"medium-08","cat":"medium","gen":128,"ptok":67,"kvu":99.5},{"id":"medium-09","cat":"medium","gen":128,"ptok":66,"kvu":99.5},{"id":"medium-10","cat":"medium","gen":128,"ptok":69,"kvu":99.5},{"id":"medium-11","cat":"medium","gen":128,"ptok":70,"kvu":99.5},{"id":"medium-12","cat":"medium","gen":128,"ptok":58,"kvu":99.5},{"id":"medium-14","cat":"medium","gen":128,"ptok":78,"kvu":99.5},{"id":"long-00","cat":"long","gen":128,"ptok":485,"kvu":99.8},{"id":"long-01","cat":"long","gen":128,"ptok":474,"kvu":99.8},{"id":"long-02","cat":"long","gen":128,"ptok":471,"kvu":99.8},{"id":"long-03","cat":"long","gen":128,"ptok":471,"kvu":99.8},{"id":"long-04","cat":"long","gen":128,"ptok":467,"kvu":99.8},{"id":"long-05","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-06","cat":"long","gen":128,"ptok":472,"kvu":99.8},{"id":"long-07","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-08","cat":"long","gen":128,"ptok":475,"kvu":99.8},{"id":"long-09","cat":"long","gen":128,"ptok":469,"kvu":99.8},{"id":"long-10","cat":"long","gen":128,"ptok":467,"kvu":99.8},{"id":"long-11","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-12","cat":"long","gen":128,"ptok":466,"kvu":99.8},{"id":"long-13","cat":"long","gen":128,"ptok":469,"kvu":99.8},{"id":"long-14","cat":"long","gen":128,"ptok":475,"kvu":99.8}]};
 const tip = document.getElementById('tip');
 function bindTip(el, text){
@@ -312,8 +374,8 @@ const RUNGS = [
    sub:'Hand-written forward pass, 24 decoder blocks, preallocated cache',
    st:'done', mt:'29.21 tok/s &middot; parity 50/50'},
   {id:'R2', nm:'Static batching',
-   sub:'Left-padding, one batched cache tensor &mdash; parity fails at batch 4 (B4)',
-   st:'active', mt:'bs 1 &check; &nbsp; bs 2 &check; &nbsp; bs 4 &times;'},
+   sub:'Left-padding, one batched cache tensor, padding-aware mask',
+   st:'done', mt:'97.06 tok/s @ bs16 &middot; 17.9% of steps wasted'},
   {id:'R3', nm:'Continuous batching', sub:'Iteration-level scheduling, waiting/running/finished',
    st:'idle', mt:'no data yet'},
   {id:'R4', nm:'Paged KV cache', sub:'Block manager with reference counting, block-aware gather',
@@ -364,6 +426,27 @@ cats.forEach(c => RUNS.forEach((r,i) => t3.push({
   tip: c + ' &middot; ' + r.label + '  ' + D.runs[r.k].by_cat[c].toFixed(2) + ' tok/s'
 })));
 hbars(document.getElementById('c3'), t3, 40, v => v.toFixed(2), '40 tok/s');
+
+/* ---- R2: blocking + batch sweep ---- */
+const CC2={short:'var(--s1)',medium:'var(--s3)',long:'var(--s2)'};
+const bmax=Math.max(...R2.blocked8.map(x=>x.b));
+document.getElementById('c6').innerHTML='<div class="cols">'+R2.blocked8.map(x=>
+  `<div class="col" style="height:${Math.max(x.b/bmax*100,1.5)}%;background:${CC2[x.cat]}"
+   data-t="${x.id}\nblocked ${x.b} steps\ngenerated ${x.g}, delivered after ${x.d}"></div>`
+ ).join('')+'</div><div class="axis"><span>worst: '+bmax+' steps blocked</span><span>'+
+ R2.blocked8.filter(x=>x.b===0).length+' of 50 not blocked</span></div>';
+document.querySelectorAll('#c6 .col').forEach(c=>bindTip(c,c.dataset.t));
+
+const tmax=Math.max(...R2.toks);
+document.getElementById('c5').innerHTML='<div class="cols" style="height:170px;gap:10px">'+
+ R2.bs.map((b,i)=>`<div class="col" style="height:${R2.toks[i]/tmax*100}%;background:${
+   R2.toks[i]===tmax?'var(--s2)':'var(--s1)'}"
+   data-t="batch size ${b}\n${R2.toks[i]} tok/s\nlatency p95 ${R2.p95[i]}s\n${
+   R2.wasted[i]}% of steps wasted"></div>`).join('')+
+ '</div><div class="axis" style="gap:10px">'+R2.bs.map((b,i)=>
+   `<span style="flex:1;text-align:center">bs ${b}<br><b style="color:var(--ink-2)">${
+    R2.toks[i]}</b></span>`).join('')+'</div>';
+document.querySelectorAll('#c5 .col').forEach(c=>bindTip(c,c.dataset.t));
 
 /* ---- KV utilisation columns ---- */
 const CC = {short:'var(--s1)', medium:'var(--s3)', long:'var(--s2)'};
