@@ -143,6 +143,73 @@ Test that distinguishes them:
               or only after several layers. Separately, re-run batch 4 in
               float32 - if (b) survives but (a) disappears, they are two
               different bugs.
-Actual cause: PENDING
-Fix:          PENDING
-Why it worked: PENDING
+Actual cause: CONFIRMED IN PART - float16 range, triggered by fully-masked
+              padding rows. Measured on the medium-00 + long-00 pair (87 real
+              tokens vs 485, so 398 pad slots on the medium sequence):
+
+                query rows that can see NO key at all : 398, all padding rows
+                mask contains -inf                    : False
+                (-5) + finfo.min in fp16              : -65504.0, NOT -inf
+                first layer with ANY NaN              : 1
+                first layer with NaN in REAL rows     : 2
+                same batch in float32                 : no NaN at any layer,
+                                                        logits clean, argmax agrees
+
+              The hypothesised first step was WRONG. Softmax over a fully
+              masked row does not produce NaN: every entry is finfo.min, so
+              after the float32 softmax the row is a finite UNIFORM
+              distribution (verified: sums to 1.0, no NaN). And finfo.min does
+              not overflow to -inf when a score is added to it - fp16
+              saturates at -65504.
+
+              What is confirmed:
+                - NaN originates in PADDING rows, at layer 1, and pad-row
+                  values at layer 0 are small and finite (max |x| = 1.5).
+                  No inf appears in any layer OUTPUT, so the overflow happens
+                  in an intermediate INSIDE layer 1 and is consumed into a NaN
+                  before reaching the layer output. Which intermediate is not
+                  yet pinned.
+                - It reaches REAL tokens one layer later. Pad K/V are written
+                  to the shared cache, and a masked weight is exactly 0 after
+                  the float32 softmax - but 0 * NaN = NaN in the value matmul,
+                  so masking does not protect a real query from a NaN pad
+                  value. This is the contamination path.
+                - It is float16-specific. float32 is clean end to end.
+                - Fully-masked rows only exist because of LEFT padding: a
+                  leading pad query row has no key at or before it that is
+                  real. This is structural to the padding scheme, not an
+                  edge case.
+
+              SEPARATION TEST (2026-09-16): compare each prompt batched-of-4
+              against the same engine running it alone - same code path both
+              ways, so only batch COMPOSITION changes.
+
+                float16   medium-00  diverge@0   (all-zeros = NaN)
+                          medium-01  diverge@0   (all-zeros = NaN)
+                          long-00    IDENTICAL   (485 tok, ZERO padding)
+                          long-01    diverge@67
+                float32   all four   IDENTICAL
+
+              THE BATCHING LOGIC IS CORRECT. In float32, batched output is
+              bit-identical to unbatched for every prompt. The mask, the
+              position ids, the cache offsets and the left-padding scheme are
+              all right. There is no batching bug.
+
+              There are TWO float16 effects, and they are different:
+                (a) NaN from fully-masked padding rows - catastrophic, scales
+                    with padding. medium-* carry ~400 pad slots and die at
+                    token 0; long-00 carries ZERO padding and is untouched.
+                (b) Near-tie argmax flips from batch-shape-dependent reduction
+                    order - subtle drift, nothing to do with padding.
+                    Decisive evidence: long-01 has exactly 11 pad slots in the
+                    batch-of-2 run (which PASSED) and exactly 11 in the
+                    batch-of-4 run (which diverged at 67). Padding identical,
+                    batch size different. That is B1 again, one level up.
+
+              (b) is not fixable - it is the same float-associativity property
+              proven in B1. Its existence means "parity at every batch size"
+              may be unachievable in float16 between differently-shaped
+              matmuls. That is a criterion decision, not a bug. See Q2.
+Fix:          NOT APPLIED - (a) awaits a decision; (b) is a property.
+Why it worked: n/a
+

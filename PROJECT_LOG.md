@@ -360,6 +360,75 @@ sequences carry ~400 pad slots each. At batch 2 the chunks pair similar lengths
 and there is almost no padding. **The failure tracks the padding ratio, not the
 batch size.** R1 parity still passes 6/6, so the unbatched path is untouched.
 
+*Root cause, confirmed in part (2026-09-16):* **float16 range, triggered by
+fully-masked padding rows.** Measured on the `medium-00` + `long-00` pair — 87
+real tokens against 485, so 398 pad slots on the medium sequence:
+
+```
+query rows that can see NO key at all : 398   (all padding rows)
+mask contains -inf                    : False
+(-5) + finfo.min in fp16              : -65504.0, NOT -inf
+first layer with ANY NaN              : 1
+first layer with NaN in REAL rows     : 2
+same batch in float32                 : clean at every layer
+```
+
+**The hypothesised first step was wrong, and the correction is the interesting
+part.** Softmax over a fully-masked row does *not* produce NaN — every entry is
+`finfo.min`, so after the float32 softmax the row is a finite **uniform**
+distribution (verified: sums to 1.0). And `finfo.min` does not overflow to
+`-inf` when a score is added to it; fp16 saturates at −65504. Both halves of the
+guess were wrong while the conclusion — "fully-masked rows are the trigger" —
+was right, which is exactly why the test was worth running instead of reasoning
+it out.
+
+What is confirmed:
+- NaN originates in **padding** rows at layer 1. Pad-row values at layer 0 are
+  small and finite (max |x| = 1.5), and no `inf` appears in any layer *output* —
+  so the overflow happens in an intermediate **inside** layer 1 and is consumed
+  into a NaN before reaching the output. Which intermediate is not yet pinned.
+- It reaches **real** tokens one layer later, and the path is the one worth
+  remembering: pad K/V are written into the shared cache, and a masked weight is
+  exactly 0 after the float32 softmax — but **0 × NaN = NaN** in the value
+  matmul. *Masking does not protect a real query from a NaN pad value.*
+- It is float16-specific; float32 is clean end to end.
+- Fully-masked rows exist **because of left padding** — a leading pad query row
+  has no real key at or before it. Structural to the padding scheme, not an edge
+  case.
+
+*Separation test (2026-09-16):* compare each prompt **batched-of-4** against the
+same engine running it **alone** — identical code path both ways, so only batch
+composition changes.
+
+```
+float16   medium-00  diverge@0   (all-zeros = NaN)
+          medium-01  diverge@0   (all-zeros = NaN)
+          long-00    IDENTICAL   (485 tok, ZERO padding)
+          long-01    diverge@67
+float32   all four   IDENTICAL
+```
+
+**The batching logic is correct.** In float32, batched output is bit-identical to
+unbatched for every prompt. The mask, the position ids, the cache offsets and the
+left-padding scheme are all right. There is no batching bug — which is not what
+the failing test looked like it was saying.
+
+There are **two** float16 effects and they are unrelated:
+
+- **(a) NaN from fully-masked padding rows.** Catastrophic, scales with padding.
+  The medium prompts carry ~400 pad slots and die at token 0; `long-00` carries
+  **zero** padding and is untouched.
+- **(b) Near-tie argmax flips from batch-shape-dependent reduction order.**
+  Subtle, and nothing to do with padding. The decisive evidence: `long-01` has
+  exactly 11 pad slots in the batch-of-2 run that **passed** and exactly 11 in
+  the batch-of-4 run that diverged at token 67. Padding identical, batch size
+  different. This is B1 again, one level up.
+
+**(b) is not fixable.** It is the same float-associativity property proven in B1,
+and it means *"parity at every batch size" may be unachievable in float16 between
+differently-shaped matmuls.* That is a criterion decision, not a defect — see Q2,
+which this promotes from downgraded back to blocking.
+
 *Build note:* one self-inflicted error before this — the patch that added the
 padded-mask branch dropped the `cos, sin = self.rope(...)` call, giving a clean
 `NameError` on the first run. Mentioned only because it is the contrast case:
@@ -522,10 +591,27 @@ Note that the R0 records currently assert `"greedy": true`, which is not
 accurate as written. Either way the results schema should record the full
 logits-processor stack, not just the sampling mode.
 
-### Q2 — Should the parity criterion be hardware-and-dtype-specific? **[OPEN, downgraded]**
-Less urgent now that Q1 resolved to a policy mismatch rather than precision.
-Still live for the GPU move: teacher-forced agreement was exact, but free-running
-fp16 parity across *different kernels* remains unproven.
+### Q2 — Should the parity criterion be hardware- and dtype-specific? **[OPEN, BLOCKING R2]**
+Promoted back to blocking on 2026-09-16 by B4(b). The evidence is now direct:
+in float32 batched output is bit-identical to unbatched for all four test
+prompts; in float16 `long-01` diverges at token 67 purely because the batch had
+four rows instead of two. Identical padding, identical code path.
+
+So **"parity at every batch size" is not achievable in float16**, not because of
+a defect but because differently-shaped matmuls reduce in different orders and
+greedy decoding amplifies the last bit. Options, all with real costs:
+1. **Correctness gate in float32, performance in float16.** Parity tests run
+   fp32/CPU; throughput numbers stay fp16/MPS. Honest, but the two configurations
+   are then never validated against each other, and it roughly doubles test time.
+2. **Per-batch-size references.** Generate an R0 reference at each batch size.
+   Cheap to run, but it quietly redefines what the test proves — it can no longer
+   catch a bug that is stable across batch sizes.
+3. **Replace exact token matching** with logits closeness plus a top-1 agreement
+   rate over teacher-forced steps. Strictly more informative, and it is the
+   diagnostic that actually found B3 — but it gives up the one-line assertion
+   that makes the project legible.
+This decision propagates to R3, R4, R5 and to the vLLM comparison, where CUDA
+kernels will reduce differently again.
 If Q1 resolves to hypothesis 2, "token-identical to R0" cannot survive a move
 to rented GPUs either, since CUDA kernels will accumulate differently again.
 Options to weigh: keep exact parity but pin it to fp32/CPU as the correctness
