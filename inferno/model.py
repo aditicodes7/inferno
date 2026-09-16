@@ -137,6 +137,32 @@ def build_causal_mask(q_len: int, kv_len: int, dtype: torch.dtype, device: str):
     return torch.where(keys <= rows, allowed, blocked)[None, None]
 
 
+def build_padded_causal_mask(pad_mask: torch.Tensor, q_len: int,
+                             dtype: torch.dtype, device: str) -> torch.Tensor:
+    """Causal mask AND padding mask, composed. Returns [B, 1, q_len, kv_len].
+
+    Two independent reasons a key may be invisible, and they must both apply:
+      - causality: a query cannot see a position after itself;
+      - padding: a pad slot holds a real K/V vector (a pad token has an
+        embedding and gets projected like anything else), and nothing else
+        stops a real query from scoring against it.
+
+    `pad_mask` is [B, kv_len], 1 for real tokens and 0 for padding, covering
+    the WHOLE cache including tokens generated so far - not just the prompt.
+    """
+    _, kv_len = pad_mask.shape
+    offset = kv_len - q_len
+    rows = torch.arange(q_len, device=device)[:, None] + offset
+    keys = torch.arange(kv_len, device=device)[None, :]
+    causal = (keys <= rows)                                   # [q_len, kv_len]
+    visible = causal[None, :, :] & pad_mask[:, None, :].bool()  # [B, q_len, kv_len]
+    return torch.where(
+        visible.unsqueeze(1),
+        torch.zeros((), dtype=dtype, device=device),
+        torch.full((), torch.finfo(dtype).min, dtype=dtype, device=device),
+    )
+
+
 def attention(q, k, v, mask, scaling: float) -> torch.Tensor:
     """UPCAST 3/3: softmax is computed in float32, then cast back."""
     weights = torch.matmul(q, k.transpose(2, 3)) * scaling
@@ -189,7 +215,8 @@ class InfernoQwen2:
         return x + h
 
     @torch.inference_mode()
-    def forward(self, input_ids: torch.Tensor, cache) -> torch.Tensor:
+    def forward(self, input_ids: torch.Tensor, cache,
+                pad_mask: torch.Tensor | None = None) -> torch.Tensor:
         """One forward pass. Prefill and decode are the same code, different shapes.
 
         Prefill: input_ids is the whole prompt, cache.length == 0.
@@ -201,15 +228,24 @@ class InfernoQwen2:
         """
         b, t = input_ids.shape
         start = cache.length
-
-        # Absolute positions continue from wherever the cache ended. During
-        # decode this is a single value, [start], NOT [0] - a token's rotation
-        # depends on where it sits in the whole sequence, not in this batch.
-        position_ids = torch.arange(start, start + t, device=self.device).unsqueeze(0).expand(b, -1)
-
         x = self.embed[input_ids]
+
+        if pad_mask is None:
+            # Unbatched. Absolute positions continue from wherever the cache
+            # ended. During decode this is a single value, [start], NOT [0] -
+            # a token's rotation depends on where it sits in the sequence.
+            position_ids = torch.arange(start, start + t,
+                                        device=self.device).unsqueeze(0).expand(b, -1)
+            mask = build_causal_mask(t, start + t, x.dtype, self.device)
+        else:
+            # Left-padded batch. Positions are NOT arange: a sequence with
+            # leading padding has its first real token at absolute position 0,
+            # so position is the count of real tokens seen so far. Pad slots
+            # clamp to 0 and are masked out anyway.
+            position_ids = (pad_mask.cumsum(-1) - 1).clamp(min=0)[:, -t:]
+            mask = build_padded_causal_mask(pad_mask, t, x.dtype, self.device)
+
         cos, sin = self.rope(position_ids, x.dtype)
-        mask = build_causal_mask(t, start + t, x.dtype, self.device)
 
         for idx, lw in enumerate(self.layers):
             x = self._layer(x, lw, cos, sin, cache, idx, start, mask)

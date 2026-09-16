@@ -7,7 +7,7 @@ Phases map to the rung plan in `CLAUDE.md`: R0 baseline, R1 own attention + KV
 cache, R2 static batching, R3 continuous batching, R4 paged KV cache,
 R5 prefix caching.
 
-**Status: R1 complete and accepted (parity 50/50). R0 re-baselined under true greedy.**
+**Status: R2 in progress — batch parity fails at batch_size=4 (Bugs §B4). R1 complete and accepted (parity 50/50).**
 
 ---
 
@@ -113,6 +113,23 @@ Results now record the **full logits-processor stack** under `config.sampling`,
 not just a `greedy: true` flag — and `tests/test_parity.py` asserts every field
 of it, so this class of mismatch cannot recur silently.
 
+### 2026-09-16 — A results dashboard now; the live serving view deferred to R3
+Chosen: `docs/dashboard.html`, a static dashboard built from the JSON files in
+`results/`, published as an Artifact. It shows the rung ladder, R0/R1
+comparisons, the KV utilisation distribution, the bug log and open questions.
+Rejected for now: a **live serving dashboard** — queue states, per-iteration
+batch composition, KV blocks allocated/freed, prefix cache hits. That is the
+view that makes continuous batching and paging legible in a way no table does,
+but it needs a scheduler to exist, so it is an R3 decision. Deciding now would
+change nothing about today's work.
+**Hard constraint on it:** the dashboard renders only measured numbers. R2 shows
+its actual pass/fail state, and R3/R4/R5 render as explicitly empty rather than
+plausible. A dashboard carrying invented R4 numbers is exactly what rules 9 and
+10 exist to prevent, and it would poison the artifact this project is for.
+The hardware caveat (Mac/MPS, not GPU) is a banner at the top, not a footnote.
+
+Published: https://claude.ai/artifact/RpzegYya34hiJMEjD7XWiX
+
 ---
 
 ## 2. Build Log
@@ -167,7 +184,9 @@ cpu/fp32.
 After regenerating R0 under true greedy: **parity 50/50, full prompt set,
 195s.** R1 accepted.
 
-Also built: `bench/diagnose_parity.py` (teacher-forced agreement harness — the
+Also built: `docs/dashboard.html` (results dashboard, published as an Artifact;
+categorical palette validated for CVD separation in both light and dark themes),
+`bench/diagnose_parity.py` (teacher-forced agreement harness — the
 tool that localised B3) and `bench/run_inferno.py` (R1 measurement, metric
 definitions identical to `run_baseline.py`).
 
@@ -320,6 +339,31 @@ both directions by shifting when EOS won.
    answers "are the logits right?" separately from "does the loop agree?", and
    the contradiction between the two answers is what identified the layer the
    bug lived in.
+
+### B4 — R2 batch parity fails at batch_size 4, passes at 1 and 2
+**2026-09-16. OPEN.** Full hypotheses and the distinguishing experiment are in
+`docs/bugs.md`.
+
+*Two distinct failure shapes in one batch*, which is itself the most useful
+clue — they are unlikely to share a cause:
+
+```
+medium-00, medium-01   diverge at token 0, emit token id 0 repeatedly
+                       got [0, 0, 0]   want [95456, 0, 6771]
+long-01                diverges at token 67 after 67 EXACT matches,
+                       plausible continuation
+```
+
+*What the batch-size pattern says:* `MIXED[:8]` chunked by 4 puts the ~80-token
+medium prompts in the same batch as the ~480-token long prompts, so the medium
+sequences carry ~400 pad slots each. At batch 2 the chunks pair similar lengths
+and there is almost no padding. **The failure tracks the padding ratio, not the
+batch size.** R1 parity still passes 6/6, so the unbatched path is untouched.
+
+*Build note:* one self-inflicted error before this — the patch that added the
+padded-mask branch dropped the `cos, sin = self.rope(...)` call, giving a clean
+`NameError` on the first run. Mentioned only because it is the contrast case:
+a structural mistake fails loudly and instantly, which is the cheap kind.
 
 ---
 

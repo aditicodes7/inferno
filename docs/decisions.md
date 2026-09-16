@@ -245,3 +245,23 @@ after this change that claim is true.
 stack under `config.sampling`, and `tests/test_parity.py` asserts every field
 of it. "greedy: true" was not a sufficient specification of a decoding
 procedure, and treating it as one cost a full debugging cycle.
+
+---
+
+## 2026-09-16 — Results dashboard now, live serving dashboard deferred to R3
+
+**Chosen:** `docs/dashboard.html` - a static dashboard generated from the JSON
+files in `results/`, published as an Artifact. Rung ladder, R0/R1 comparisons,
+KV utilisation distribution, bug log, open questions.
+
+**Rejected (for now):** a live serving dashboard showing queue states,
+per-iteration batch composition, KV block allocation and prefix cache hits.
+
+**Why:** the live view is the one that makes continuous batching and paged
+attention legible to a viewer, but it needs a scheduler to exist. It is an R3
+decision, and taking it now would not change any work done today.
+
+**Constraint that shapes the whole page:** only measured numbers are rendered.
+R2 shows its real pass/fail state; R3, R4 and R5 render as explicitly empty.
+Invented placeholder numbers would be precisely the failure rules 9 and 10 exist
+to prevent. The Mac/MPS hardware caveat is a banner, not a footnote.

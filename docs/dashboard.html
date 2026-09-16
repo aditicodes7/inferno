@@ -1,0 +1,376 @@
+<title>Inferno Rung Ladder</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --ground:#eef1f4; --surface:#ffffff; --surface-2:#f7f9fb;
+  --ink:#11161d; --ink-2:#4d5766; --ink-3:#79838f;
+  --rule:#dbe1e8; --rule-2:#eaeef2;
+  --s1:#1f6fb2; --s2:#c4531e; --s3:#0f8a5f;
+  --done:#0f8a5f; --active:#c4531e; --idle:#98a2b0;
+  --warn-bg:#fdf3e7; --warn-ink:#8a4a12; --warn-rule:#e8c9a0;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#101317; --surface:#181c22; --surface-2:#1e232a;
+  --ink:#e9edf2; --ink-2:#a3adba; --ink-3:#7d8794;
+  --rule:#2b323b; --rule-2:#222830;
+  --s1:#4e9bd6; --s2:#dd7433; --s3:#2fa877;
+  --done:#2fa877; --active:#dd7433; --idle:#6b7684;
+  --warn-bg:#2a2016; --warn-ink:#e0ab6d; --warn-rule:#4a3a24;
+}}
+:root[data-theme="dark"]{
+  --ground:#101317; --surface:#181c22; --surface-2:#1e232a;
+  --ink:#e9edf2; --ink-2:#a3adba; --ink-3:#7d8794;
+  --rule:#2b323b; --rule-2:#222830;
+  --s1:#4e9bd6; --s2:#dd7433; --s3:#2fa877;
+  --done:#2fa877; --active:#dd7433; --idle:#6b7684;
+  --warn-bg:#2a2016; --warn-ink:#e0ab6d; --warn-rule:#4a3a24;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding-inline:20px;padding-block:40px 64px}
+h1,h2,h3{text-wrap:balance;margin:0}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--s2);font-weight:600}
+h1{font-size:clamp(30px,6vw,46px);line-height:1.05;letter-spacing:-.022em;
+  font-weight:600;margin-top:10px}
+.lede{color:var(--ink-2);max-width:62ch;margin-top:14px;font-size:16px}
+.hw{display:flex;gap:12px;align-items:flex-start;margin-top:26px;padding:13px 16px;
+  background:var(--warn-bg);border:1px solid var(--warn-rule);border-radius:3px;
+  color:var(--warn-ink);font-size:13.5px;line-height:1.5}
+.hw b{font-family:var(--mono);font-weight:600}
+h2{font-size:13px;font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600;margin-top:56px;padding-bottom:9px;
+  border-bottom:1px solid var(--rule)}
+.note{color:var(--ink-2);font-size:14px;max-width:72ch;margin-top:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);margin-top:22px;border-radius:3px;overflow:hidden}
+.tile{background:var(--surface);padding:20px 18px}
+.tile .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.tile .v{font-family:var(--mono);font-size:32px;font-weight:600;letter-spacing:-.02em;
+  margin-top:9px;font-variant-numeric:tabular-nums;line-height:1}
+.tile .u{font-size:15px;color:var(--ink-2);font-weight:400}
+.tile .d{font-size:13px;color:var(--ink-2);margin-top:8px}
+.tile .d em{font-style:normal;color:var(--s2);font-family:var(--mono);font-weight:500}
+
+/* rung ladder */
+.ladder{margin-top:22px;border:1px solid var(--rule);border-radius:3px;overflow:hidden;background:var(--surface)}
+.rung{display:grid;grid-template-columns:54px 1fr auto;gap:16px;align-items:baseline;
+  padding:15px 18px;border-top:1px solid var(--rule-2)}
+.rung:first-child{border-top:0}
+.rung.pending{background:var(--surface-2)}
+.rung .id{font-family:var(--mono);font-weight:600;font-size:14px;letter-spacing:.02em}
+.rung.pending .id,.rung.pending .nm,.rung.pending .mt{color:var(--ink-3)}
+.rung .nm{font-weight:500}
+.rung .sub{display:block;font-weight:400;color:var(--ink-2);font-size:13.5px;margin-top:3px}
+.rung .mt{font-family:var(--mono);font-size:14px;font-variant-numeric:tabular-nums;
+  text-align:right;white-space:nowrap}
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+  text-transform:uppercase;font-weight:600;padding:2px 7px;border-radius:2px;
+  border:1px solid currentColor;margin-left:9px;vertical-align:1px}
+.p-done{color:var(--done)} .p-active{color:var(--active)} .p-idle{color:var(--idle)}
+
+/* charts */
+.chart{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  padding:20px 20px 18px;margin-top:20px}
+.chart h3{font-size:15px;font-weight:600}
+.chart .cap{color:var(--ink-2);font-size:13.5px;margin-top:5px;max-width:70ch}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px}
+.legend span{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2);
+  font-family:var(--mono)}
+.legend i{width:11px;height:11px;border-radius:2px;display:block}
+.bars{margin-top:16px;display:flex;flex-direction:column;gap:11px}
+.barrow{display:grid;grid-template-columns:minmax(96px,132px) 1fr;gap:12px;align-items:center}
+.barrow .lb{font-family:var(--mono);font-size:12px;color:var(--ink-2);text-align:right;
+  line-height:1.35;white-space:pre-line}
+.track{position:relative;height:100%}
+.bar{height:19px;border-radius:0 3px 3px 0;display:flex;align-items:center;
+  transition:filter .12s}
+.bar:hover{filter:brightness(1.12)}
+.bar .val{font-family:var(--mono);font-size:12px;font-weight:600;color:#fff;
+  padding-right:8px;margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar .valout{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);
+  position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);white-space:nowrap}
+.grp{display:flex;flex-direction:column;gap:4px}
+.axis{display:flex;justify-content:space-between;margin-top:12px;padding-top:7px;
+  border-top:1px solid var(--rule-2);font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+.cols{display:flex;align-items:flex-end;gap:1px;height:150px;margin-top:16px;
+  padding-bottom:2px;border-bottom:1px solid var(--rule)}
+.col{flex:1;min-width:0;border-radius:2px 2px 0 0;transition:filter .12s}
+.col:hover{filter:brightness(1.2)}
+
+/* tables */
+.tbl{margin-top:20px;border:1px solid var(--rule);border-radius:3px;overflow-x:auto;
+  background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:13.5px}
+th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;padding:11px 14px;
+  border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:12px 14px;border-top:1px solid var(--rule-2);vertical-align:top}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
+.q{margin-top:20px;display:flex;flex-direction:column;gap:1px;background:var(--rule);
+  border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.qi{background:var(--surface);padding:15px 18px}
+.qi .qh{font-weight:600;font-size:14.5px}
+.qi .qb{color:var(--ink-2);font-size:13.5px;margin-top:5px;max-width:78ch}
+.qi .tag{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;
+  font-weight:600;margin-left:8px}
+.foot{margin-top:52px;padding-top:18px;border-top:1px solid var(--rule);
+  color:var(--ink-3);font-size:12.5px;font-family:var(--mono);line-height:1.7}
+#tip{position:fixed;z-index:50;pointer-events:none;opacity:0;transition:opacity .1s;
+  background:var(--ink);color:var(--ground);font-family:var(--mono);font-size:11.5px;
+  padding:6px 9px;border-radius:3px;white-space:pre;line-height:1.45}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (max-width:560px){
+  .rung{grid-template-columns:44px 1fr;row-gap:6px}
+  .rung .mt{grid-column:2;text-align:left}
+  .barrow{grid-template-columns:1fr;gap:4px}
+  .barrow .lb{text-align:left}
+}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Inferno &middot; from-scratch LLM inference engine</div>
+  <h1>Rung Ladder</h1>
+  <p class="lede">Six rungs from a HuggingFace baseline to paged attention and prefix
+  caching. Each rung must produce a <strong>number</strong> and a <strong>correctness
+  proof</strong> before the next one starts. The proof is always the same: token-identical
+  output to R0 under greedy decoding. Not similar &mdash; identical.</p>
+
+  <div class="hw">
+    <span>&#9888;</span>
+    <div><b>Every number on this page was measured on a MacBook (Apple Silicon, MPS
+    backend, float16, Qwen2.5-0.5B-Instruct).</b> These are not GPU numbers and must
+    not be read as any. GPU runs happen later on rented hardware and will be reported
+    separately.</div>
+  </div>
+
+  <h2>Where it stands</h2>
+  <div class="tiles">
+    <div class="tile">
+      <div class="k">R1 decode throughput</div>
+      <div class="v">29.21<span class="u"> tok/s</span></div>
+      <div class="d"><em>+9.1%</em> vs HuggingFace on the same attention path</div>
+    </div>
+    <div class="tile">
+      <div class="k">Parity vs R0</div>
+      <div class="v">50<span class="u">/50</span></div>
+      <div class="d">token-identical, full prompt set</div>
+    </div>
+    <div class="tile">
+      <div class="k">R1 prefill penalty</div>
+      <div class="v">4.6<span class="u">&times;</span></div>
+      <div class="d">TTFT p95 vs HuggingFace &mdash; <em>the real gap</em></div>
+    </div>
+    <div class="tile">
+      <div class="k">KV cache utilisation</div>
+      <div class="v">85.8<span class="u">%</span></div>
+      <div class="d">worst single request <em>26.2%</em></div>
+    </div>
+  </div>
+
+  <h2>The ladder</h2>
+  <div class="ladder" id="ladder"></div>
+
+  <h2>R1 &mdash; hand-written engine vs HuggingFace</h2>
+  <p class="note">Inferno uses eager attention, so the honest like-for-like comparison is
+  against HuggingFace&rsquo;s eager path. HF&rsquo;s fused SDPA kernel is shown too, because
+  that is what HuggingFace actually runs by default and pretending otherwise would flatter
+  Inferno.</p>
+
+  <div class="chart">
+    <h3>Decode throughput</h3>
+    <p class="cap">Prefill excluded by construction: timing starts at the first generated
+    token. Aggregate over all 50 prompts, 128 max new tokens, batch size 1.</p>
+    <div id="c1"></div>
+  </div>
+
+  <div class="chart">
+    <h3>Time to first token</h3>
+    <p class="cap">Prefill, measured. Inferno wins on decode and loses badly here &mdash; and
+    the p95 gap is dominated by the 475-token RAG prompts. This is the first genuine
+    performance gap of the project.</p>
+    <div id="c2"></div>
+  </div>
+
+  <div class="chart">
+    <h3>Decode throughput by prompt length</h3>
+    <p class="cap">Same model, same settings; the only difference is context length. Long
+    prompts decode slower for every implementation &mdash; that is the KV cache getting more
+    expensive to read on every single step, showing up unprompted in the baseline.</p>
+    <div id="c3"></div>
+  </div>
+
+  <h2>Why R4 exists</h2>
+  <p class="note">R1&rsquo;s cache preallocates <code>prompt_len + max_new_tokens</code> and never
+  grows, so every sequence reserves for its worst case. Verified linear at exactly
+  <strong>12,288 bytes per token</strong> &mdash; matching 2 &times; 24 layers &times; 2 KV heads
+  &times; 64 head_dim &times; 2 bytes.</p>
+
+  <div class="chart">
+    <h3>KV utilisation per request, all 50 prompts</h3>
+    <p class="cap">Fraction of reserved cache actually holding a real token, sorted ascending.
+    The mean of 85.8% flatters the design: 35 of 50 prompts ran the full 128 tokens, so there
+    was little early termination to waste reservation on. The left tail is the real cost.</p>
+    <div id="c4"></div>
+    <div class="legend">
+      <span><i style="background:var(--s1)"></i>short</span>
+      <span><i style="background:var(--s3)"></i>medium</span>
+      <span><i style="background:var(--s2)"></i>long</span>
+    </div>
+  </div>
+
+  <h2>Bugs worth the writeup</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>ID</th><th>What broke</th><th>Mechanism</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>B1</td>
+        <td>sdpa and eager produced different tokens from identical inputs &mdash; 10/50 prompts,
+        one diverging at generated token 1.</td>
+        <td>Fused kernels accumulate in a different order; float addition is not associative.
+        Greedy decoding turns a 1-ulp difference into a different paragraph once argmax flips
+        on a near-tie, and the two sequences never re-converge.</td>
+        <td>property, not a defect</td></tr>
+      <tr><td>B2</td>
+        <td>TTFT p95 of 297&nbsp;ms that would not reproduce &mdash; later runs gave 88&nbsp;ms.
+        TTFT was not monotonic in prompt length.</td>
+        <td>Outliers followed neither the prompt nor its position in the run; they appeared only
+        in the <em>first process ever run on the machine</em>. Leading explanation is persistent
+        on-disk Metal shader caching &mdash; not directly proven.</td>
+        <td>resolved &mdash; methodology</td></tr>
+      <tr><td>B3</td>
+        <td>R1 parity failed 49/50. Fluent output, no crash, up to 34 exactly-matching tokens
+        before diverging.</td>
+        <td>The checkpoint ships <code>repetition_penalty: 1.1</code>, and HuggingFace applies it
+        <em>in greedy decoding</em> &mdash; it is not gated on <code>do_sample</code>. The
+        hand-written forward pass was correct throughout: teacher-forced agreement was 371/371.
+        <strong>&ldquo;Greedy&rdquo; is not a complete specification of a decoding procedure.</strong></td>
+        <td>resolved</td></tr>
+      <tr><td>B4</td>
+        <td>R2 batch parity fails at batch size 4, passes at 1 and 2. Two failure shapes at once:
+        one batch emits token&nbsp;0 repeatedly, another drifts after 67 exact tokens.</td>
+        <td>Tracks the <em>padding ratio</em>, not the batch size &mdash; failure appears when
+        ~80-token prompts share a batch with ~480-token ones. Under investigation.</td>
+        <td>open</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Open questions</h2>
+  <div class="q">
+    <div class="qi"><div class="qh">Why is Inferno&rsquo;s prefill 1.8&ndash;4.6&times; slower than
+      HuggingFace&rsquo;s eager path?<span class="tag" style="color:var(--active)">open</span></div>
+      <div class="qb">Four candidates, none measured: a fresh mask tensor allocated every forward;
+      <code>repeat_kv</code> materialising a 7&times; copy of K and V at 475 positions; cos/sin
+      recomputed per forward; fp32 softmax over a 14&times;475&times;475 tensor. Profile before
+      touching any of it.</div></div>
+    <div class="qi"><div class="qh">Should the parity criterion be hardware- and dtype-specific?
+      <span class="tag" style="color:var(--active)">open</span></div>
+      <div class="qb">Teacher-forced agreement was exact, but free-running fp16 parity across
+      <em>different kernels</em> remains unproven. If it cannot survive a kernel change it cannot
+      survive the move to rented GPUs either.</div></div>
+    <div class="qi"><div class="qh">Was the B2 tail actually Metal shader caching?
+      <span class="tag" style="color:var(--idle)">low priority</span></div>
+      <div class="qb">Never directly proven. Clearing the Metal cache and re-running would settle it.</div></div>
+  </div>
+
+  <div class="foot">
+    Qwen2.5-0.5B-Instruct &middot; 24 layers &middot; 14 query heads / 2 KV heads &middot; head_dim 64<br>
+    50 fixed prompts: 20 short &middot; 15 medium &middot; 15 long RAG (sharing one document)<br>
+    greedy, repetition_penalty 1.0, 128 max new tokens, 3 warm-ups discarded<br>
+    torch 2.14.0 &middot; transformers 5.17.0 &middot; python 3.11
+  </div>
+</div>
+<div id="tip" role="status"></div>
+
+<script>
+const D = {"runs":{"r0_sdpa":{"file":"r0_baseline_mps_sdpa_20260916_114721.json","rung":"R0","device":"mps","dtype":"torch.float16","attn":"sdpa","decode_tok_s":36.288076640549725,"ttft_p50_ms":54.11824950033406,"ttft_p95_ms":72.99906670014025,"peak_rss_mb":1997.668352,"by_cat":{"long":34.95343910680475,"medium":37.54209804102743,"short":36.448293607685024},"kv_util":null},"r0_eager":{"file":"r0_baseline_mps_eager_20260916_115052.json","rung":"R0","device":"mps","dtype":"torch.float16","attn":"eager","decode_tok_s":26.772099063619855,"ttft_p50_ms":51.030916000399884,"ttft_p95_ms":78.05582285027411,"peak_rss_mb":2422.063104,"by_cat":{"long":23.734324538101642,"medium":28.864687288528998,"short":28.378000342968498},"kv_util":null},"r1_inferno":{"file":"r1_inferno_mps_20260916_115813.json","rung":"R1","device":"mps","dtype":"torch.float16","attn":"eager","decode_tok_s":29.208319795458742,"ttft_p50_ms":93.71810350057785,"ttft_p95_ms":358.8082517490875,"peak_rss_mb":1734.377472,"by_cat":{"long":26.962637816999155,"medium":30.017910826516264,"short":32.2387266201616},"kv_util":0.8579564714004415}},"kv":[{"id":"short-00","cat":"short","gen":8,"ptok":36,"kvu":26.2},{"id":"short-17","cat":"short","gen":13,"ptok":39,"kvu":30.5},{"id":"short-08","cat":"short","gen":14,"ptok":38,"kvu":30.7},{"id":"short-01","cat":"short","gen":23,"ptok":36,"kvu":35.4},{"id":"short-18","cat":"short","gen":33,"ptok":36,"kvu":41.5},{"id":"short-10","cat":"short","gen":35,"ptok":37,"kvu":43.0},{"id":"short-02","cat":"short","gen":36,"ptok":36,"kvu":43.3},{"id":"short-09","cat":"short","gen":46,"ptok":43,"kvu":51.5},{"id":"short-16","cat":"short","gen":52,"ptok":39,"kvu":53.9},{"id":"short-03","cat":"short","gen":62,"ptok":37,"kvu":59.4},{"id":"short-11","cat":"short","gen":68,"ptok":38,"kvu":63.3},{"id":"short-12","cat":"short","gen":70,"ptok":38,"kvu":64.5},{"id":"short-05","cat":"short","gen":103,"ptok":35,"kvu":84.0},{"id":"medium-13","cat":"medium","gen":105,"ptok":65,"kvu":87.6},{"id":"short-14","cat":"short","gen":109,"ptok":43,"kvu":88.3},{"id":"short-04","cat":"short","gen":128,"ptok":34,"kvu":99.4},{"id":"short-06","cat":"short","gen":128,"ptok":39,"kvu":99.4},{"id":"short-07","cat":"short","gen":128,"ptok":35,"kvu":99.4},{"id":"short-13","cat":"short","gen":128,"ptok":38,"kvu":99.4},{"id":"short-15","cat":"short","gen":128,"ptok":37,"kvu":99.4},{"id":"short-19","cat":"short","gen":128,"ptok":36,"kvu":99.4},{"id":"medium-00","cat":"medium","gen":128,"ptok":87,"kvu":99.5},{"id":"medium-01","cat":"medium","gen":128,"ptok":73,"kvu":99.5},{"id":"medium-02","cat":"medium","gen":128,"ptok":79,"kvu":99.5},{"id":"medium-03","cat":"medium","gen":128,"ptok":62,"kvu":99.5},{"id":"medium-04","cat":"medium","gen":128,"ptok":72,"kvu":99.5},{"id":"medium-05","cat":"medium","gen":128,"ptok":73,"kvu":99.5},{"id":"medium-06","cat":"medium","gen":128,"ptok":64,"kvu":99.5},{"id":"medium-07","cat":"medium","gen":128,"ptok":61,"kvu":99.5},{"id":"medium-08","cat":"medium","gen":128,"ptok":67,"kvu":99.5},{"id":"medium-09","cat":"medium","gen":128,"ptok":66,"kvu":99.5},{"id":"medium-10","cat":"medium","gen":128,"ptok":69,"kvu":99.5},{"id":"medium-11","cat":"medium","gen":128,"ptok":70,"kvu":99.5},{"id":"medium-12","cat":"medium","gen":128,"ptok":58,"kvu":99.5},{"id":"medium-14","cat":"medium","gen":128,"ptok":78,"kvu":99.5},{"id":"long-00","cat":"long","gen":128,"ptok":485,"kvu":99.8},{"id":"long-01","cat":"long","gen":128,"ptok":474,"kvu":99.8},{"id":"long-02","cat":"long","gen":128,"ptok":471,"kvu":99.8},{"id":"long-03","cat":"long","gen":128,"ptok":471,"kvu":99.8},{"id":"long-04","cat":"long","gen":128,"ptok":467,"kvu":99.8},{"id":"long-05","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-06","cat":"long","gen":128,"ptok":472,"kvu":99.8},{"id":"long-07","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-08","cat":"long","gen":128,"ptok":475,"kvu":99.8},{"id":"long-09","cat":"long","gen":128,"ptok":469,"kvu":99.8},{"id":"long-10","cat":"long","gen":128,"ptok":467,"kvu":99.8},{"id":"long-11","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-12","cat":"long","gen":128,"ptok":466,"kvu":99.8},{"id":"long-13","cat":"long","gen":128,"ptok":469,"kvu":99.8},{"id":"long-14","cat":"long","gen":128,"ptok":475,"kvu":99.8}]};
+const tip = document.getElementById('tip');
+function bindTip(el, text){
+  el.addEventListener('mouseenter', e => { tip.textContent = text; tip.style.opacity = 1; });
+  el.addEventListener('mousemove', e => {
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 10) + 'px';
+    tip.style.top = (e.clientY - tip.offsetHeight - 10) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
+}
+
+const RUNS = [
+  {k:'r0_sdpa',   label:'HF sdpa',   sub:'R0 default',   c:'var(--s1)'},
+  {k:'r0_eager',  label:'HF eager',  sub:'R0 same path', c:'var(--s3)'},
+  {k:'r1_inferno',label:'Inferno',   sub:'R1',           c:'var(--s2)'},
+];
+
+/* ---- rung ladder ---- */
+const RUNGS = [
+  {id:'R0', nm:'Baseline', sub:'HuggingFace generate(), greedy, batch size 1',
+   st:'done', mt:'36.29 tok/s &middot; TTFT p50 54.1 ms'},
+  {id:'R1', nm:'Own attention + KV cache',
+   sub:'Hand-written forward pass, 24 decoder blocks, preallocated cache',
+   st:'done', mt:'29.21 tok/s &middot; parity 50/50'},
+  {id:'R2', nm:'Static batching',
+   sub:'Left-padding, one batched cache tensor &mdash; parity fails at batch 4 (B4)',
+   st:'active', mt:'bs 1 &check; &nbsp; bs 2 &check; &nbsp; bs 4 &times;'},
+  {id:'R3', nm:'Continuous batching', sub:'Iteration-level scheduling, waiting/running/finished',
+   st:'idle', mt:'no data yet'},
+  {id:'R4', nm:'Paged KV cache', sub:'Block manager with reference counting, block-aware gather',
+   st:'idle', mt:'no data yet'},
+  {id:'R5', nm:'Prefix caching', sub:'Per-block prefix hashing, copy-on-write on divergence',
+   st:'idle', mt:'no data yet'},
+];
+document.getElementById('ladder').innerHTML = RUNGS.map(r => `
+  <div class="rung ${r.st==='idle'?'pending':''}">
+    <div class="id">${r.id}</div>
+    <div><span class="nm">${r.nm}<span class="pill p-${r.st}">${
+      r.st==='done'?'accepted':r.st==='active'?'in progress':'not started'}</span></span>
+      <span class="sub">${r.sub}</span></div>
+    <div class="mt">${r.mt}</div>
+  </div>`).join('');
+
+/* ---- horizontal bar charts ---- */
+function hbars(el, rows, max, fmt, axisMax){
+  el.innerHTML = '<div class="bars">' + rows.map(r => `
+    <div class="barrow"><div class="lb">${r.label}</div>
+      <div class="track"><div class="bar" data-t="${r.tip}"
+        style="width:${Math.max(r.v/max*100, 2)}%;background:${r.c}">
+        ${r.v/max > 0.22 ? `<span class="val">${fmt(r.v)}</span>`
+                         : `<span class="valout">${fmt(r.v)}</span>`}</div></div></div>`).join('')
+    + '</div><div class="axis"><span>0</span><span>' + axisMax + '</span></div>';
+  el.querySelectorAll('.bar').forEach(b => bindTip(b, b.dataset.t));
+}
+
+hbars(document.getElementById('c1'),
+  RUNS.map(r => ({label: r.label + '\n' + r.sub, v: D.runs[r.k].decode_tok_s, c: r.c,
+                  tip: r.label + '  ' + D.runs[r.k].decode_tok_s.toFixed(2) + ' tok/s'})),
+  40, v => v.toFixed(2) + ' tok/s', '40 tok/s');
+
+const t2 = [];
+RUNS.forEach(r => {
+  t2.push({label: r.label + '\np50', v: D.runs[r.k].ttft_p50_ms, c: r.c,
+           tip: r.label + ' TTFT p50  ' + D.runs[r.k].ttft_p50_ms.toFixed(1) + ' ms'});
+  t2.push({label: 'p95', v: D.runs[r.k].ttft_p95_ms, c: r.c,
+           tip: r.label + ' TTFT p95  ' + D.runs[r.k].ttft_p95_ms.toFixed(1) + ' ms'});
+});
+hbars(document.getElementById('c2'), t2, 380, v => v.toFixed(1) + ' ms', '380 ms');
+
+const cats = ['short','medium','long'];
+const t3 = [];
+cats.forEach(c => RUNS.forEach((r,i) => t3.push({
+  label: i === 0 ? c + '\n' + r.label : r.label,
+  v: D.runs[r.k].by_cat[c], c: r.c,
+  tip: c + ' &middot; ' + r.label + '  ' + D.runs[r.k].by_cat[c].toFixed(2) + ' tok/s'
+})));
+hbars(document.getElementById('c3'), t3, 40, v => v.toFixed(2), '40 tok/s');
+
+/* ---- KV utilisation columns ---- */
+const CC = {short:'var(--s1)', medium:'var(--s3)', long:'var(--s2)'};
+document.getElementById('c4').innerHTML = '<div class="cols">' + D.kv.map(x =>
+  `<div class="col" style="height:${x.kvu}%;background:${CC[x.cat]}"
+    data-t="${x.id}\n${x.kvu}% utilised\n${x.gen} of 128 tokens generated\nprompt ${x.ptok} tok"></div>`
+  ).join('') + '</div><div class="axis"><span>worst: ' + D.kv[0].kvu + '% (' + D.kv[0].id +
+  ')</span><span>best: ' + D.kv[D.kv.length-1].kvu + '%</span></div>';
+document.querySelectorAll('#c4 .col').forEach(c => bindTip(c, c.dataset.t.replace(/\\n/g,'\n')));
+</script>

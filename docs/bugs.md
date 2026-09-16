@@ -102,3 +102,47 @@ Actual cause: `generation_config.json` shipped with Qwen2.5-0.5B-Instruct sets
               the forward pass was correct all along.
 Fix:          NOT YET APPLIED - two legitimate options, see PROJECT_LOG Q5.
 Why it worked: n/a. Confirmed by toggling the penalty alone: 1/12 -> 12/12.
+
+---
+
+## 2026-09-16 — R2 batch parity fails at batch_size=4, passes at 1 and 2
+
+Symptom:      batch 1 PASS, batch 2 PASS, batch 4 FAIL. Two distinct failure
+              shapes in the same batch:
+                (a) medium-00 and medium-01 diverge at token 0 and emit
+                    token id 0 repeatedly: got [0, 0, 0] vs want [95456, 0, 6771].
+                    Catastrophic, not drift.
+                (b) long-01 diverges at token 67 after 67 EXACT matches, with a
+                    plausible continuation. Looks like ordinary numeric drift.
+Expected:     identical tokens at every batch size.
+Key context:  MIXED[:8] chunked by 4 puts medium-00 (87 tok) and medium-01
+              (73 tok) in the SAME batch as long-00 (485) and long-01 (474).
+              At batch 2 the chunks are [m0,m1] and [l0,l1] - similar lengths,
+              almost no padding. The failure appears exactly when the padding
+              ratio becomes large (~400 pad slots on a 485-wide batch).
+Hypotheses:   1) Fully-masked rows produce NaN, which then contaminates real
+                 positions. A leading pad query row can see no keys at all
+                 (every key at or before it is also padding), so its whole
+                 score row is masked. Two sub-mechanisms worth separating:
+                 whether softmax over an all-masked row yields NaN at all, and
+                 if so whether NaN reaches real tokens - note that a masked
+                 weight is 0 but 0 * NaN = NaN in the value matmul, and pad
+                 rows do get written into the KV cache.
+              2) Position IDs wrong for left-padded sequences - would give
+                 wrong-but-finite tokens, and should not depend on how much
+                 padding there is, only on whether there is any.
+              3) Batched matmul reduction order - a real effect already proven
+                 in B1, but it produces plausible drift, not repeated token 0.
+                 This could explain (b) while being irrelevant to (a).
+Test that distinguishes them:
+              Run one padded batch prefill and inspect the intermediate tensors
+              directly: check logits and per-layer hidden states for NaN;
+              check whether the additive mask value overflows to -inf in float16
+              (finfo.min plus a negative score is outside float16 range);
+              and check whether the real rows are already corrupted at layer 0
+              or only after several layers. Separately, re-run batch 4 in
+              float32 - if (b) survives but (a) disappears, they are two
+              different bugs.
+Actual cause: PENDING
+Fix:          PENDING
+Why it worked: PENDING
