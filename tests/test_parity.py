@@ -21,12 +21,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.device import find_eager_reference, resolve_device
+
 ROOT = Path(__file__).resolve().parent.parent
 
-# Named explicitly rather than globbed: the parity reference is a fixed
-# artifact, and silently picking up a newer file would invalidate the whole
-# comparison without anyone noticing.
-REFERENCE = ROOT / "results" / "mac" / "r0_baseline_mps_eager_20260916_115052.json"
+# The reference must come from the SAME DEVICE the tests run on. CUDA and MPS
+# kernels reduce in different orders, and greedy decoding turns a last-bit
+# difference into a different paragraph (PROJECT_LOG.md B1), so borrowing
+# another machine's reference reports failures that are not defects.
+REFERENCE = find_eager_reference(resolve_device())
 
 # One from each length regime, plus three that R0 showed are fragile: short-15
 # diverged between attention backends at generated token 1, long-08 at token 8,
@@ -41,11 +44,12 @@ SUBSET = ["short-00", "short-09", "short-15", "medium-01", "long-00", "long-08"]
 
 @pytest.fixture(scope="session")
 def reference() -> dict:
-    if not REFERENCE.exists():
-        pytest.fail(
-            f"Parity reference missing: {REFERENCE.relative_to(ROOT)}\n"
-            "Regenerate with: .venv/bin/python bench/run_baseline.py --attn eager"
-        )
+    device = resolve_device()
+    if REFERENCE is None:
+        pytest.skip(
+            f"No eager R0 reference for device={device!r}. This is expected the "
+            f"first time on new hardware - generate one with:\n"
+            f"    python bench/run_baseline.py --device {device} --attn eager")
     data = json.loads(REFERENCE.read_text())
     cfg = data["config"]
     # Guard against the single most expensive mistake available here.

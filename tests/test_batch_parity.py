@@ -31,10 +31,11 @@ import os
 
 import pytest
 
+from tests.device import resolve_device
 from tests.test_parity import ROOT, prompts  # noqa: F401  (prompts is a fixture)
 
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
-DEVICE = "mps"
+DEVICE = resolve_device()
 MAX_NEW = 48
 
 # Deliberately mixed lengths: ~36-token chat prompts batched alongside

@@ -18,10 +18,11 @@ import os
 
 import pytest
 
+from tests.device import resolve_device
 from tests.test_parity import ROOT
 
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
-DEVICE = "mps"
+DEVICE = resolve_device()
 MAX_NEW = 16
 
 
