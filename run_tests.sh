@@ -11,6 +11,18 @@
 # The tensor-free files run first, so a logic regression surfaces in 0.05s
 # rather than after minutes of model loading.
 cd "$(dirname "$0")"
+
+# Use the local venv when there is one (Mac dev), otherwise whatever python is
+# on PATH (Kaggle, Colab, a rented box). Hardcoding ./.venv/bin/python meant
+# this script could only ever run on the machine it was written on.
+if [ -n "$PYTHON" ]; then :
+elif [ -x ./.venv/bin/python ]; then PYTHON=./.venv/bin/python
+elif command -v python3 >/dev/null; then PYTHON=python3
+else PYTHON=python
+fi
+echo "python: $($PYTHON -c 'import sys;print(sys.version.split()[0], sys.executable)')"
+echo
+
 fail=0
 for f in tests/test_scheduler.py tests/test_block_manager.py tests/test_prefix_cache.py \
          tests/test_parity.py tests/test_paged_parity.py tests/test_prefix_parity.py \
@@ -21,7 +33,7 @@ for f in tests/test_scheduler.py tests/test_block_manager.py tests/test_prefix_c
   # progress dots, and an earlier version of this script captured a bare "."
   # and then grepped THAT for failures - so a failing file would have been
   # reported green.
-  out=$(./.venv/bin/python -m pytest "$f" -q 2>&1)
+  out=$("$PYTHON" -m pytest "$f" -q 2>&1)
   line=$(echo "$out" | grep -E '^[0-9]+ (passed|failed)|[0-9]+ (passed|failed|error)' | tail -1)
   if echo "$out" | grep -qE '[0-9]+ (failed|error)'; then
     echo "FAIL  $line"; fail=1
