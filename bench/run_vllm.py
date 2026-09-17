@@ -30,6 +30,13 @@ def main() -> None:
     ap.add_argument("--max-new-tokens", type=int, default=128)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.90)
+    ap.add_argument("--no-prefix-cache", action="store_true",
+                    help="disable vLLM's prefix cache. REQUIRED for a clean "
+                         "sequential measurement: the max_tokens=1 TTFT probe "
+                         "populates the cache, so the full run that follows "
+                         "gets a prefix hit and the subtraction undercounts "
+                         "decode time. Left on, the first GPU run reported "
+                         "167 tok/s against vLLM's own internal 79 tok/s.")
     ap.add_argument("--reference", default=None,
                     help="an Inferno results file to report token agreement against")
     args = ap.parse_args()
@@ -45,7 +52,8 @@ def main() -> None:
     # every latency figure.
     llm = LLM(model=args.model, dtype="float16",
               gpu_memory_utilization=args.gpu_memory_utilization,
-              enforce_eager=False, disable_log_stats=False)
+              enforce_eager=False, disable_log_stats=False,
+              enable_prefix_caching=not args.no_prefix_cache)
     tok = llm.get_tokenizer()
 
     # Same chat template as every other rung (docs/decisions.md).
@@ -155,6 +163,7 @@ def main() -> None:
     payload = {
         "rung": "vllm", "run_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "config": {"model": args.model, "engine": "vllm", "dtype": "float16",
+                   "prefix_caching": not args.no_prefix_cache,
                    "max_new_tokens": args.max_new_tokens, "greedy": True,
                    "repetition_penalty": 1.0,
                    "gpu_memory_utilization": args.gpu_memory_utilization,
@@ -169,7 +178,8 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, indent=2))
 
-    print(f"\n{'='*62}\nvLLM  [{payload['environment']['cuda_device']}]\n{'='*62}")
+    print(f"\n{'='*62}\nvLLM  [{payload['environment']['cuda_device']}]"
+          f"  prefix_cache={'off' if args.no_prefix_cache else 'ON'}\n{'='*62}")
     print(f"  BATCHED (all 50 at once, vLLM as intended)")
     print(f"    wall throughput   {summary['throughput_tok_s_wall']:8.2f} tok/s")
     print(f"  SEQUENTIAL (one at a time - comparable to R0/R1)")
