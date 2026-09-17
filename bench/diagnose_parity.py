@@ -27,19 +27,29 @@ sys.path.insert(0, str(ROOT))
 from inferno.engine import InfernoEngine
 from inferno.cache import KVCache
 
-REF = ROOT / "results/mac/r0_baseline_mps_eager_20260915_131830.json"
+def _reference(device: str):
+    """Newest eager reference for THIS device. The path used to be hardcoded to
+    a file that was later superseded and moved, so this script was broken even
+    on the machine it was written on."""
+    hw = "gpu" if device == "cuda" else "mac"
+    found = sorted((ROOT / "results" / hw).glob(f"r0_baseline_{device}_eager_*.json"))
+    if not found:
+        raise SystemExit(
+            f"No eager reference for device={device!r}. Generate one:\n"
+            f"    python bench/run_baseline.py --device {device} --attn eager")
+    return found[-1]
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 
-def load():
-    ref = json.loads(REF.read_text())
+def load(device="mps"):
+    ref = json.loads(_reference(device).read_text())
     prompts = {p["id"]: p for p in json.loads((ROOT / "bench/prompts.json").read_text())["prompts"]}
     return ref, {r["prompt_id"]: r for r in ref["records"]}, prompts
 
 
 def experiment_a(pids, device="mps", dtype=torch.float16):
     print(f"\n{'='*70}\nA) TEACHER-FORCED AGREEMENT  [{device} / {dtype}]\n{'='*70}")
-    ref, exp, prompts = load()
+    ref, exp, prompts = load(device)
     eng = InfernoEngine(MODEL, device=device, dtype=str(dtype).removeprefix("torch."), attn="eager")
     hf = AutoModelForCausalLM.from_pretrained(MODEL, dtype=dtype, attn_implementation="eager").to(device).eval()
 

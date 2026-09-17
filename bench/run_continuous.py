@@ -113,7 +113,8 @@ def main() -> None:
     ap.add_argument("--slots", type=int, default=8)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--budget", type=float, default=0.5, help="p95 TTFT budget, seconds")
-    ap.add_argument("--device", default="mps")
+    ap.add_argument("--device", default="auto",
+                    choices=["auto", "cpu", "mps", "cuda"])
     ap.add_argument("--dtype", default="float16")
     args = ap.parse_args()
 
@@ -132,7 +133,7 @@ def main() -> None:
            "config": {"pattern": args.pattern, "n_requests": args.n_requests,
                       "max_new_tokens": args.max_new_tokens, "slots": args.slots,
                       "batch_size": args.batch_size, "budget_s": args.budget,
-                      "device": args.device, "dtype": args.dtype,
+                      "device": cont.device, "dtype": args.dtype,
                       "model": "Qwen/Qwen2.5-0.5B-Instruct",
                       "prompts_version": spec["version"]},
            "environment": {"torch": torch.__version__,
@@ -160,7 +161,7 @@ def main() -> None:
         out["by_rate"][str(rate)] = row
         print()
 
-    p = ROOT / "results" / ("gpu" if args.device == "cuda" else "mac") / \
+    p = ROOT / "results" / ("gpu" if cont.device == "cuda" else "mac") / \
         f"r3_continuous_{args.device}_{args.pattern}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     p.write_text(json.dumps(out, indent=2))
     print(f"-> {p.relative_to(ROOT)}")

@@ -31,7 +31,8 @@ def main() -> None:
     ap.add_argument("--n-requests", type=int, default=24)
     ap.add_argument("--max-new-tokens", type=int, default=48)
     ap.add_argument("--block-sizes", default="4,16,64")
-    ap.add_argument("--device", default="mps")
+    ap.add_argument("--device", default="auto",
+                    choices=["auto", "cpu", "mps", "cuda"])
     ap.add_argument("--dtype", default="float16")
     args = ap.parse_args()
 
@@ -68,7 +69,7 @@ def main() -> None:
            "config": {"budget_bytes": budget, "bytes_per_token": bytes_per_token,
                       "max_len": max_len, "n_requests": args.n_requests,
                       "max_new_tokens": args.max_new_tokens,
-                      "device": args.device, "dtype": args.dtype,
+                      "device": paged.device, "dtype": args.dtype,
                       "model": "Qwen/Qwen2.5-0.5B-Instruct",
                       "prompts_version": spec["version"]},
            "environment": {"torch": torch.__version__,
@@ -124,7 +125,7 @@ def main() -> None:
               f"{row['kv_bytes']/1e6:>7.1f} "
               f"{row['block_utilisation']*100:>8.1f}% {row['preemptions']:>8}")
 
-    p = ROOT / "results" / ("gpu" if args.device == "cuda" else "mac") / \
+    p = ROOT / "results" / ("gpu" if paged.device == "cuda" else "mac") / \
         f"r4_paged_{args.device}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     p.write_text(json.dumps(out, indent=2))
     print(f"\n-> {p.relative_to(ROOT)}")

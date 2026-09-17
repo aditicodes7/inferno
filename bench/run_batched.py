@@ -30,7 +30,8 @@ from bench.run_baseline import percentile, peak_memory_bytes, sync
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch-sizes", default="1,2,4,8,16")
-    ap.add_argument("--device", default="mps")
+    ap.add_argument("--device", default="auto",
+                    choices=["auto", "cpu", "mps", "cuda"])
     ap.add_argument("--dtype", default="float16")
     ap.add_argument("--max-new-tokens", type=int, default=128)
     ap.add_argument("--warmup", type=int, default=2)

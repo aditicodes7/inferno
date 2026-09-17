@@ -26,7 +26,8 @@ def main() -> None:
     ap.add_argument("--max-new-tokens", type=int, default=24)
     ap.add_argument("--block-size", type=int, default=16)
     ap.add_argument("--n-blocks", type=int, default=768)
-    ap.add_argument("--device", default="mps")
+    ap.add_argument("--device", default="auto",
+                    choices=["auto", "cpu", "mps", "cuda"])
     ap.add_argument("--dtype", default="float16")
     args = ap.parse_args()
 
@@ -58,7 +59,7 @@ def main() -> None:
            "config": {"workload": args.workload, "n_requests": args.n_requests,
                       "max_new_tokens": args.max_new_tokens,
                       "block_size": args.block_size, "n_blocks": args.n_blocks,
-                      "device": args.device, "dtype": args.dtype,
+                      "device": eng.device, "dtype": args.dtype,
                       "model": "Qwen/Qwen2.5-0.5B-Instruct",
                       "prompts_version": spec["version"]},
            "environment": {"torch": torch.__version__,
@@ -104,7 +105,7 @@ def main() -> None:
     print(f"  wall clock: {a['wall_clock_s']:.1f}s -> {b['wall_clock_s']:.1f}s  "
           f"({a['wall_clock_s']/b['wall_clock_s']:.2f}x)")
 
-    p = ROOT / "results" / ("gpu" if args.device == "cuda" else "mac") / \
+    p = ROOT / "results" / ("gpu" if eng.device == "cuda" else "mac") / \
         f"r5_prefix_{args.device}_{args.workload}_{time.strftime('%Y%m%d_%H%M%S')}.json"
     p.write_text(json.dumps(out, indent=2))
     print(f"\n-> {p.relative_to(ROOT)}")
