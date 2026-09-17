@@ -1,0 +1,68 @@
+{
+  "rung": "R4",
+  "run_at": "2026-09-17T08:33:41",
+  "config": {
+    "budget_bytes": 512000000,
+    "bytes_per_token": 12288,
+    "max_len": 533,
+    "n_requests": 64,
+    "max_new_tokens": 48,
+    "device": "cuda",
+    "dtype": "float16",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "prompts_version": 1
+  },
+  "environment": {
+    "torch": "2.10.0+cu128",
+    "transformers": "5.17.0",
+    "platform": "Linux-6.12.90+-x86_64-with-glibc2.35"
+  },
+  "runs": {
+    "r3": {
+      "design": "R3 contiguous",
+      "concurrent_capacity": 78,
+      "peak_concurrent": 64,
+      "throughput_tok_s": 836.7958790574444,
+      "wall_clock_s": 3.250494018999916,
+      "kv_bytes": 510861312,
+      "preemptions": 0,
+      "utilisation": 0.17301829268292682
+    },
+    "r4_bs4": {
+      "design": "R4 paged bs=4",
+      "n_blocks": 10416,
+      "concurrent_capacity": null,
+      "peak_concurrent": 64,
+      "throughput_tok_s": 823.629390148526,
+      "wall_clock_s": 3.302456217000099,
+      "kv_bytes": 511967232,
+      "block_utilisation": 0.9659373042574709,
+      "preemptions": 0,
+      "blocks_leaked": 0
+    },
+    "r4_bs16": {
+      "design": "R4 paged bs=16",
+      "n_blocks": 2604,
+      "concurrent_capacity": null,
+      "peak_concurrent": 64,
+      "throughput_tok_s": 854.4061122454457,
+      "wall_clock_s": 3.183497824999904,
+      "kv_bytes": 511967232,
+      "block_utilisation": 0.8447449852132961,
+      "preemptions": 0,
+      "blocks_leaked": 0
+    },
+    "r4_bs64": {
+      "design": "R4 paged bs=64",
+      "n_blocks": 651,
+      "concurrent_capacity": null,
+      "peak_concurrent": 64,
+      "throughput_tok_s": 850.7599200295189,
+      "wall_clock_s": 3.197141680000186,
+      "kv_bytes": 511967232,
+      "block_utilisation": 0.6368410076196247,
+      "preemptions": 0,
+      "blocks_leaked": 0
+    }
+  }
+}

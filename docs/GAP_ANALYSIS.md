@@ -50,7 +50,7 @@ Two further measurements point the same way:
 - At equal concurrency (512 MB, 64 sequences) the **paged** engine ran at
   854.41 tok/s against the **contiguous** engine's 836.80 — paging was 2%
   *faster*, not slower. The gather costs essentially nothing at this scale.
-- A prefix-cache hit computes 8.7% of a prompt's tokens but takes ~70% of a cold
+- A prefix-cache hit computes 8.5% of a prompt's tokens but takes 70.0% of a cold
   prefill's time on GPU (29.0 ms vs 41.7 ms), which does show the gather not
   shrinking with the cache — but that is a 1.4× effect inside prefill, not a 4.5×
   effect on the whole engine.

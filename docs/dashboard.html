@@ -341,7 +341,7 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
       table.</p><div id="c9"></div></div>
   </div>
 
-  <h2>R5 &mdash; prefix caching</h2>
+  <h2>R5 &mdash; prefix caching (Apple Silicon)</h2>
   <p class="note">Attention is causal, so position <em>i</em>&rsquo;s K/V depend only on tokens
   0&ndash;<em>i</em>. Two sequences starting with identical tokens have <strong>bit-identical</strong>
   KV across that span &mdash; so the blocks are shared, not recomputed. Workload: 15 prompts
@@ -358,14 +358,16 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
       <div>WALL CLOCK<b>56.7 &rarr; 19.0 s</b></div>
     </div></div>
   <div class="empty">
-    <h3>The limit, measured from two directions</h3>
-    <p>A cache hit computes ~8.7% of the prompt&rsquo;s tokens but still takes ~23% of a cold
-    prefill. The saving lands on the projections, the MLP and the attention math &mdash; the
-    <strong>gather is unchanged</strong>: every layer materialises the whole block table
-    regardless of how much was cached. R4 showed the same ceiling from the other side, where
-    paging at equal concurrency was ~8% <em>faster</em> than contiguous, because the contiguous
-    baseline gathers too. A fused PagedAttention kernel is what removes this, and it is the
-    single largest expected line item in the gap analysis.</p>
+    <h3>What this looked like before the GPU run &mdash; and why it was wrong</h3>
+    <p>On Apple Silicon a cache hit computed ~8.7% of a prompt&rsquo;s tokens but still took
+    ~23% of a cold prefill, and R4 found paging <em>faster</em> than contiguous at equal
+    concurrency. Both were read as the same thing: <strong>the gather is the bottleneck</strong>,
+    and it was written into the log as the largest expected line item in the gap analysis.</p>
+    <p>On CUDA the effect is real and sharper &mdash; a hit computes <strong>8.5%</strong> of the
+    tokens and takes <strong>70.0%</strong> of the cold prefill, 8.3&times; more time than the
+    token count predicts. But it explains almost none of the gap against vLLM. R1, which has no
+    block table and no gather at all, is <em>already</em> 4.49&times; behind. A 1.4&times; effect
+    inside prefill cannot produce a 4.5&times; gap across the engine.</p>
   </div>
 
   <h2>Still open</h2>
