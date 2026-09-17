@@ -156,14 +156,20 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
 
   <div class="hw">
     <span>&#9888;</span>
-    <div><b>Every number here was measured on a MacBook (Apple Silicon, MPS backend,
-    float16, Qwen2.5-0.5B-Instruct).</b> These are not GPU numbers and must not be read
-    as any. No GPU run has happened yet, and three findings below explicitly need
-    re-checking on real hardware before they can be trusted.</div>
+    <div><b>Measured on two platforms: a MacBook (Apple Silicon, MPS) and a Tesla T4
+    (Kaggle, CUDA).</b> Each section says which. They do not agree, and where they disagree
+    the GPU is right &mdash; <b>four conclusions drawn on Apple Silicon turned out to be
+    artifacts of that platform</b>, including one this project treated as central.</div>
   </div>
 
   <h2>What each rung bought</h2>
   <div class="tiles">
+    <div class="tile"><div class="k">vs vLLM 0.29 &middot; Tesla T4</div>
+      <div class="v">4.5<span class="u">&times;</span></div>
+      <div class="d">behind on decode &mdash; and <em>not</em> where we predicted</div></div>
+    <div class="tile"><div class="k">vs HuggingFace &middot; Tesla T4</div>
+      <div class="v">+22<span class="u">%</span></div>
+      <div class="d">38.88 vs <em>31.76 tok/s</em> single-stream</div></div>
     <div class="tile"><div class="k">R3 &middot; arrival rate at a TTFT budget</div>
       <div class="v">5.3<span class="u">&times;</span></div>
       <div class="d">0.3 &rarr; <em>1.6 req/s</em> at p95 TTFT under 500&nbsp;ms</div></div>
@@ -178,10 +184,88 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
       <div class="d">all green &middot; <em>10 bugs</em> traced to mechanism</div></div>
   </div>
 
+  <h2>vs vLLM &mdash; Tesla T4</h2>
+  <p class="note">Same GPU, same model, same 50 prompts, greedy, float16. vLLM&rsquo;s install
+  downgrades torch 2.10&rarr;2.13, so every Inferno figure here was re-measured afterwards
+  &mdash; Inferno lost 7.6% on that change alone, and the earlier numbers would have
+  overstated it.</p>
+  <div class="two">
+    <div class="chart"><h3>Single-stream decode</h3>
+      <p class="cap">One request at a time, the way R0 and R1 were measured.</p>
+      <div id="g1"></div></div>
+    <div class="chart"><h3>Batched, 50 prompts</h3>
+      <p class="cap">Inferno at batch 32 against vLLM&rsquo;s continuous batching. Two very
+      different regimes producing nearly the same ratio.</p>
+      <div id="g2"></div></div>
+  </div>
+
+  <div class="empty" style="border-style:solid;background:var(--surface)">
+    <h3>The gap is not where this project spent five rungs predicting it would be</h3>
+    <p>Throughout, the <strong>gather</strong> was logged as the largest expected line item:
+    Inferno materialises a contiguous K/V tensor from the block table every layer, every
+    decode step, where vLLM&rsquo;s kernel walks the block table internally and never
+    materialises. It was written down as the answer twice before any GPU existed to test it.</p>
+    <p><strong>R1 has no block table and no gather at all &mdash; and is already 4.49&times;
+    behind.</strong> The gap is fully present before paging is introduced, so paging cannot
+    cause it. At equal concurrency the paged engine actually ran 2% <em>faster</em> than the
+    contiguous one.</p>
+    <p>The real answer is in the grouping: Inferno (38.88) and HuggingFace (31.76) sit within
+    22% of each other, and vLLM is 4.5&times; <em>both</em>. The difference is not something
+    Inferno does badly &mdash; it is something <strong>neither does at all</strong>: CUDA graph
+    capture (vLLM replays one captured graph where Inferno dispatches ~360 kernel launches per
+    step from Python), ahead-of-time compilation, and a fused attention kernel.
+    <a href="https://github.com/aditicodes7/inferno/blob/main/docs/GAP_ANALYSIS.md">Full
+    analysis &rarr;</a></p>
+  </div>
+
+  <div class="chart"><h3>The techniques themselves work</h3>
+    <p class="cap">Prefix caching, same shared-document workload, both engines.</p>
+    <div class="kpi">
+      <div>INFERNO &middot; THROUGHPUT GAIN<b>+20.1%</b></div>
+      <div>vLLM &middot; THROUGHPUT GAIN<b>+19.3%</b></div>
+      <div>INFERNO &middot; HIT RATE<b>83.8%</b></div>
+      <div>vLLM &middot; HIT RATE<b>86.1%</b></div>
+    </div>
+    <p class="cap" style="margin-top:14px">Within 3 points on hit rate and 1 point on
+    throughput gain. <strong>The ideas transfer; the execution layer does not.</strong></p>
+  </div>
+
+  <h2>What the GPU destroyed</h2>
+  <p class="note">Every rung was first measured on Apple Silicon. Four conclusions did not
+  survive CUDA. All four were measured carefully, reproduced, and written down with
+  confidence &mdash; they were properties of one platform mistaken for properties of the
+  technique, and nothing achievable on that platform could have caught it.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Concluded on MPS</th><th>On CUDA</th></tr></thead>
+    <tbody>
+      <tr><td>Throughput peaks at <em>exactly</em> batch 16 and falls back at 20 &mdash;
+        reproducible across three runs</td>
+        <td><strong>Dead.</strong> Monotonic 1&rarr;32: 38.9 &rarr; 214 &rarr; 644 tok/s.
+        An MPS kernel artifact.</td></tr>
+      <tr><td>&ldquo;The textbook batching argument does not hold here&rdquo; &mdash; batching
+        bought ~8% from batch 1 to 8</td>
+        <td><strong>Dead.</strong> 5.5&times; from 1&rarr;8, 16.6&times; at 32. The argument
+        holds fine; MPS was the problem.</td></tr>
+      <tr><td>Block size 16 is clearly best (146 vs 115/139 tok/s), matching vLLM&rsquo;s
+        default</td>
+        <td><strong>Dead.</strong> Nearly flat across 4/16/64, and 16 is the <em>slowest</em>.
+        bs=4 gives 97.2% utilisation <em>and</em> full concurrency.</td></tr>
+      <tr><td>Prefix caching cuts TTFT 4.89&times;</td>
+        <td><strong>Overstated.</strong> 1.44&times;. Prefilling 485 tokens costs a T4 ~42 ms
+        &mdash; there is little to save. The value of prefix caching is proportional to how
+        expensive prefill was.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note"><strong>What survived:</strong> head-of-line blocking at 17.9% of decode
+  steps on <em>both</em> platforms (a property of the policy, not the hardware); continuous
+  batching&rsquo;s advantage, which <em>grew</em> from 5.3&times; to 16&times;; paging&rsquo;s
+  concurrency advantage, 8&times; &rarr; 9.1&times;; and the prefix cache hit rate, 83.8% on
+  both.</p>
+
   <h2>The ladder</h2>
   <div class="ladder" id="ladder"></div>
 
-  <h2>R1 &mdash; hand-written engine vs HuggingFace</h2>
+  <h2>R1 &mdash; hand-written engine vs HuggingFace (Apple Silicon)</h2>
   <p class="note">Inferno uses eager attention, so the like-for-like comparison is against
   HuggingFace&rsquo;s eager path. HF&rsquo;s fused SDPA kernel is shown too, because that is
   what HuggingFace actually runs by default and omitting it would flatter Inferno.</p>
@@ -195,7 +279,7 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
       prompts &mdash; the first genuine performance gap of the project.</p><div id="c2"></div></div>
   </div>
 
-  <h2>R2 &mdash; static batching, and why it is not enough</h2>
+  <h2>R2 &mdash; static batching, and why it is not enough (Apple Silicon)</h2>
   <p class="note">A static batch runs until <em>every</em> sequence in it finishes. A request
   needing 8 tokens sits through all 128 steps, producing nothing and holding its cache slot.
   Prompts are <strong>not</strong> sorted by length &mdash; sorting would flatten the tail and
@@ -284,23 +368,19 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
     single largest expected line item in the gap analysis.</p>
   </div>
 
-  <h2>Not measured yet</h2>
+  <h2>Still open</h2>
   <div class="empty">
-    <h3>GPU runs &mdash; <span class="win">no data</span></h3>
-    <p>Every number on this page is Mac/MPS. <code>results/gpu/</code> is empty. Three findings
-    need re-checking on real hardware before they mean anything: B5&rsquo;s batch-16 anomaly, the
-    flat 1&rarr;8 batching curve, and the gather cost against a fused kernel.</p>
+    <h3>The 4&times; is named but not decomposed</h3>
+    <p>Four causes identified and ranked by argument &mdash; graph capture, compilation, fused
+    attention, chunked prefill. No profiler was run, so that ranking is reasoned rather than
+    measured. Nsight or <code>torch.profiler</code> would settle it.</p>
   </div>
   <div class="empty">
-    <h3>vLLM comparison &mdash; <span class="win">no data</span></h3>
-    <p>Identical hardware, identical workload, not yet run. Inferno is expected to lose; the
-    value is in explaining precisely where.</p>
+    <h3>One GPU, one model, one session</h3>
+    <p>Tesla T4, 0.5B parameters. A 7B model on an A100 would move every ratio here. And the
+    four MPS conclusions that died are a standing warning against trusting any of these
+    numbers on a third platform without re-measuring.</p>
   </div>
-  <div class="empty">
-    <h3>Gap analysis &mdash; <span class="win">not written</span></h3>
-    <p>The most important deliverable of the project, and it depends on both of the above.</p>
-  </div>
-
   <h2>Bugs, with mechanisms</h2>
   <div class="tbl"><table>
     <thead><tr><th>ID</th><th>What broke</th><th>Mechanism</th><th>Status</th></tr></thead>
@@ -351,6 +431,7 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
 <div id="tip" role="status"></div>
 
 <script>
+const G = {"hf":31.761,"inf":38.883,"vllm":174.519,"hf_ttft":36.569,"inf_ttft":29.115,"vllm_ttft":20.709,"inf_batch":643.824,"vllm_batch":2547.38};
 const D = {"r0":{"sdpa":{"toks":36.288076640549725,"p50":54.11824950033406,"p95":72.99906670014025,"cat":{"long":34.95343910680475,"medium":37.54209804102743,"short":36.448293607685024}},"eager":{"toks":26.772099063619855,"p50":51.030916000399884,"p95":78.05582285027411,"cat":{"long":23.734324538101642,"medium":28.864687288528998,"short":28.378000342968498}}},"r1":{"toks":29.208319795458742,"p50":93.71810350057785,"p95":358.8082517490875,"kvu":0.8579564714004415,"cat":{"long":26.962637816999155,"medium":30.017910826516264,"short":32.2387266201616},"kv":[{"id":"short-00","cat":"short","kvu":26.2,"gen":8,"ptok":36},{"id":"short-17","cat":"short","kvu":30.5,"gen":13,"ptok":39},{"id":"short-08","cat":"short","kvu":30.7,"gen":14,"ptok":38},{"id":"short-01","cat":"short","kvu":35.4,"gen":23,"ptok":36},{"id":"short-18","cat":"short","kvu":41.5,"gen":33,"ptok":36},{"id":"short-10","cat":"short","kvu":43.0,"gen":35,"ptok":37},{"id":"short-02","cat":"short","kvu":43.3,"gen":36,"ptok":36},{"id":"short-09","cat":"short","kvu":51.5,"gen":46,"ptok":43},{"id":"short-16","cat":"short","kvu":53.9,"gen":52,"ptok":39},{"id":"short-03","cat":"short","kvu":59.4,"gen":62,"ptok":37},{"id":"short-11","cat":"short","kvu":63.3,"gen":68,"ptok":38},{"id":"short-12","cat":"short","kvu":64.5,"gen":70,"ptok":38},{"id":"short-05","cat":"short","kvu":84.0,"gen":103,"ptok":35},{"id":"medium-13","cat":"medium","kvu":87.6,"gen":105,"ptok":65},{"id":"short-14","cat":"short","kvu":88.3,"gen":109,"ptok":43},{"id":"short-04","cat":"short","kvu":99.4,"gen":128,"ptok":34},{"id":"short-06","cat":"short","kvu":99.4,"gen":128,"ptok":39},{"id":"short-07","cat":"short","kvu":99.4,"gen":128,"ptok":35},{"id":"short-13","cat":"short","kvu":99.4,"gen":128,"ptok":38},{"id":"short-15","cat":"short","kvu":99.4,"gen":128,"ptok":37},{"id":"short-19","cat":"short","kvu":99.4,"gen":128,"ptok":36},{"id":"medium-00","cat":"medium","kvu":99.5,"gen":128,"ptok":87},{"id":"medium-01","cat":"medium","kvu":99.5,"gen":128,"ptok":73},{"id":"medium-02","cat":"medium","kvu":99.5,"gen":128,"ptok":79},{"id":"medium-03","cat":"medium","kvu":99.5,"gen":128,"ptok":62},{"id":"medium-04","cat":"medium","kvu":99.5,"gen":128,"ptok":72},{"id":"medium-05","cat":"medium","kvu":99.5,"gen":128,"ptok":73},{"id":"medium-06","cat":"medium","kvu":99.5,"gen":128,"ptok":64},{"id":"medium-07","cat":"medium","kvu":99.5,"gen":128,"ptok":61},{"id":"medium-08","cat":"medium","kvu":99.5,"gen":128,"ptok":67},{"id":"medium-09","cat":"medium","kvu":99.5,"gen":128,"ptok":66},{"id":"medium-10","cat":"medium","kvu":99.5,"gen":128,"ptok":69},{"id":"medium-11","cat":"medium","kvu":99.5,"gen":128,"ptok":70},{"id":"medium-12","cat":"medium","kvu":99.5,"gen":128,"ptok":58},{"id":"medium-14","cat":"medium","kvu":99.5,"gen":128,"ptok":78},{"id":"long-00","cat":"long","kvu":99.8,"gen":128,"ptok":485},{"id":"long-01","cat":"long","kvu":99.8,"gen":128,"ptok":474},{"id":"long-02","cat":"long","kvu":99.8,"gen":128,"ptok":471},{"id":"long-03","cat":"long","kvu":99.8,"gen":128,"ptok":471},{"id":"long-04","cat":"long","kvu":99.8,"gen":128,"ptok":467},{"id":"long-05","cat":"long","kvu":99.8,"gen":128,"ptok":477},{"id":"long-06","cat":"long","kvu":99.8,"gen":128,"ptok":472},{"id":"long-07","cat":"long","kvu":99.8,"gen":128,"ptok":477},{"id":"long-08","cat":"long","kvu":99.8,"gen":128,"ptok":475},{"id":"long-09","cat":"long","kvu":99.8,"gen":128,"ptok":469},{"id":"long-10","cat":"long","kvu":99.8,"gen":128,"ptok":467},{"id":"long-11","cat":"long","kvu":99.8,"gen":128,"ptok":477},{"id":"long-12","cat":"long","kvu":99.8,"gen":128,"ptok":466},{"id":"long-13","cat":"long","kvu":99.8,"gen":128,"ptok":469},{"id":"long-14","cat":"long","kvu":99.8,"gen":128,"ptok":475}]},"r2":{"bs":[1,2,4,8,12,16,20],"toks":[28.3,30.16,30.6,30.53,37.06,97.06,68.36],"wasted":[0.0,6.5,10.8,17.9,18.0,17.8,17.9],"p95":[5.09,9.34,17.74,32.18,39.2,25.31,33.77],"blocked8":[{"id":"short-00","cat":"short","b":120,"g":8,"d":128},{"id":"short-17","cat":"short","b":115,"g":13,"d":128},{"id":"short-08","cat":"short","b":114,"g":14,"d":128},{"id":"short-01","cat":"short","b":105,"g":23,"d":128},{"id":"short-18","cat":"short","b":95,"g":33,"d":128},{"id":"short-10","cat":"short","b":93,"g":35,"d":128},{"id":"short-02","cat":"short","b":92,"g":36,"d":128},{"id":"short-09","cat":"short","b":82,"g":46,"d":128},{"id":"short-16","cat":"short","b":76,"g":52,"d":128},{"id":"short-03","cat":"short","b":66,"g":62,"d":128},{"id":"short-11","cat":"short","b":60,"g":68,"d":128},{"id":"short-12","cat":"short","b":58,"g":70,"d":128},{"id":"short-05","cat":"short","b":25,"g":103,"d":128},{"id":"medium-13","cat":"medium","b":23,"g":105,"d":128},{"id":"short-14","cat":"short","b":19,"g":109,"d":128},{"id":"short-04","cat":"short","b":0,"g":128,"d":128},{"id":"short-06","cat":"short","b":0,"g":128,"d":128},{"id":"short-07","cat":"short","b":0,"g":128,"d":128},{"id":"short-13","cat":"short","b":0,"g":128,"d":128},{"id":"short-15","cat":"short","b":0,"g":128,"d":128},{"id":"short-19","cat":"short","b":0,"g":128,"d":128},{"id":"medium-00","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-01","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-02","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-03","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-04","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-05","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-06","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-07","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-08","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-09","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-10","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-11","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-12","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-14","cat":"medium","b":0,"g":128,"d":128},{"id":"long-00","cat":"long","b":0,"g":128,"d":128},{"id":"long-01","cat":"long","b":0,"g":128,"d":128},{"id":"long-02","cat":"long","b":0,"g":128,"d":128},{"id":"long-03","cat":"long","b":0,"g":128,"d":128},{"id":"long-04","cat":"long","b":0,"g":128,"d":128},{"id":"long-05","cat":"long","b":0,"g":128,"d":128},{"id":"long-06","cat":"long","b":0,"g":128,"d":128},{"id":"long-07","cat":"long","b":0,"g":128,"d":128},{"id":"long-08","cat":"long","b":0,"g":128,"d":128},{"id":"long-09","cat":"long","b":0,"g":128,"d":128},{"id":"long-10","cat":"long","b":0,"g":128,"d":128},{"id":"long-11","cat":"long","b":0,"g":128,"d":128},{"id":"long-12","cat":"long","b":0,"g":128,"d":128},{"id":"long-13","cat":"long","b":0,"g":128,"d":128},{"id":"long-14","cat":"long","b":0,"g":128,"d":128}]},"r3":{"rates":[0.2,0.3,0.4,0.8,1.6,2.0,2.4,3.2],"cont_p95":[0.16,0.095,0.137,0.1,0.433,3.767,2.951,3.74],"stat_p95":[0.041,0.162,0.501,1.258,3.598,5.514,5.13,6.314],"cont_tok":[6.53,9.69,14.35,27.12,38.76,38.54,40.76,43.15],"stat_tok":[6.53,9.69,14.26,26.43,35.79,37.63,38.61,41.1],"cont_ok":[true,true,true,true,true,false,false,false],"stat_ok":[true,true,false,false,false,false,false,false],"burst":{"cont_tok":44.6,"stat_tok":37.77,"cont_p50":0.279,"stat_p50":2.923}},"r4":{"cap":{"r3":{"design":"R3 contiguous","concurrent_capacity":7,"peak_concurrent":7,"throughput_tok_s":39.19285090912113,"wall_clock_s":51.13177412500045,"kv_bytes":45158400,"preemptions":0,"utilisation":0.15765306122448983},"r4":{"design":"R4 paged bs=16","n_blocks":244,"concurrent_capacity":null,"peak_concurrent":56,"throughput_tok_s":110.652048162564,"wall_clock_s":18.110826083000575,"kv_bytes":47972352,"block_utilisation":0.8603582368983279,"preemptions":8,"blocks_leaked":0}},"sweep":[{"bs":4,"util":0.9566449466596849,"toks":115.25782577028231},{"bs":16,"util":0.8279156024153975,"toks":146.36851164764786},{"bs":64,"util":0.6533158400708481,"toks":138.74193023454174}]},"r5":{"off":{"prefix_cache":false,"hit_rate":0.0,"prefill_tokens_computed":7092,"prefill_tokens_total":7092,"prefill_saved_frac":0.0,"cold_prefill_ms":1730.7803278667657,"hit_prefill_ms":null,"n_cold":15,"n_hit":0,"wall_clock_s":56.74955591700018,"throughput_tok_s":6.343661975549603,"preemptions":0},"on":{"prefix_cache":true,"hit_rate":0.8381374722838137,"prefill_tokens_computed":1044,"prefill_tokens_total":7092,"prefill_saved_frac":0.8527918781725888,"cold_prefill_ms":1392.3602499999106,"hit_prefill_ms":354.20535992865814,"n_cold":1,"n_hit":14,"wall_clock_s":18.993043165999552,"throughput_tok_s":18.95430852515804,"preemptions":0}}};
 const tip = document.getElementById('tip');
 function bindTip(el, text){
@@ -363,17 +444,17 @@ function bindTip(el, text){
 }
 const RUNGS = [
   {id:'R0', nm:'Baseline', sub:'HuggingFace generate(), greedy, batch size 1',
-   mt:'36.29 tok/s &middot; TTFT p50 54.1 ms'},
+   mt:'31.76 tok/s on T4'},
   {id:'R1', nm:'Own attention + KV cache', sub:'Hand-written forward pass, 24 decoder blocks',
-   mt:'29.21 tok/s &middot; parity 50/50'},
+   mt:'38.88 tok/s &middot; +22% vs HF'},
   {id:'R2', nm:'Static batching', sub:'Left-padding, padding-aware mask, one batched cache',
    mt:'17.9% of decode steps wasted'},
   {id:'R3', nm:'Continuous batching', sub:'Iteration-level scheduling, slot-based cache',
-   mt:'5.3&times; arrival rate at a TTFT budget'},
+   mt:'16&times; arrival rate at a TTFT budget'},
   {id:'R4', nm:'Paged KV cache', sub:'Block allocator, refcounting, preemption with recompute',
-   mt:'8&times; concurrent sequences, same memory'},
+   mt:'9.1&times; concurrent sequences'},
   {id:'R5', nm:'Prefix caching', sub:'Prefix-keyed blocks, LRU cached tier, copy-on-write',
-   mt:'4.89&times; TTFT on a cache hit'},
+   mt:'83.8% hit rate &middot; +20% throughput'},
 ];
 document.getElementById('ladder').innerHTML = RUNGS.map(r => `
   <div class="rung done"><div class="id">${r.id}</div>
@@ -413,6 +494,22 @@ R.forEach(([l,k,c]) => { t2.push({label:l.split('\n')[0]+'\np50', v:p50[k], c,
     tip:`${l.split('\n')[0]} TTFT p50  ${p50[k].toFixed(1)} ms`});
   t2.push({label:'p95', v:p95[k], c, tip:`${l.split('\n')[0]} TTFT p95  ${p95[k].toFixed(1)} ms`}); });
 hbars(document.getElementById('c2'), t2, 380, v => v.toFixed(1)+' ms', '380 ms');
+
+/* GPU comparison */
+hbars(document.getElementById('g1'), [
+  {label:'HuggingFace\nsdpa', v:G.hf, c:'var(--s1)',
+   tip:`HuggingFace sdpa\n${G.hf.toFixed(2)} tok/s\nTTFT p50 ${G.hf_ttft.toFixed(1)} ms`},
+  {label:'Inferno', v:G.inf, c:'var(--s2)',
+   tip:`Inferno\n${G.inf.toFixed(2)} tok/s  (+${(G.inf/G.hf*100-100).toFixed(1)}% vs HF)\nTTFT p50 ${G.inf_ttft.toFixed(1)} ms`},
+  {label:'vLLM 0.29', v:G.vllm, c:'var(--s3)',
+   tip:`vLLM 0.29\n${G.vllm.toFixed(2)} tok/s  (${(G.vllm/G.inf).toFixed(2)}x vs Inferno)\nTTFT p50 ${G.vllm_ttft.toFixed(1)} ms`},
+], 190, v=>v.toFixed(1)+' tok/s', '190 tok/s');
+hbars(document.getElementById('g2'), [
+  {label:'Inferno\nbatch 32', v:G.inf_batch, c:'var(--s2)',
+   tip:`Inferno, static batch 32\n${G.inf_batch.toFixed(2)} tok/s`},
+  {label:'vLLM 0.29', v:G.vllm_batch, c:'var(--s3)',
+   tip:`vLLM, continuous batching over 50 prompts\n${G.vllm_batch.toFixed(2)} tok/s  (${(G.vllm_batch/G.inf_batch).toFixed(2)}x)`},
+], 2700, v=>v.toFixed(0)+' tok/s', '2700 tok/s');
 
 /* R2 */
 const CC={short:'var(--s1)',medium:'var(--s3)',long:'var(--s2)'};
