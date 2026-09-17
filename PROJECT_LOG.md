@@ -345,7 +345,9 @@ an exhausted pool; one mis-stated an expected hit count), and the full test suit
 itself (§B9). No engine bug in this rung.
 
 Acceptance: `pytest tests/test_prefix_cache.py tests/test_prefix_parity.py` —
-**16 passed**. Parity holds for share-then-diverge, for cache-on vs cache-off,
+**16 passed**. Full regression suite via `./run_tests.sh`: **63 tests across 8
+files, all green** (scheduler 10, block_manager 14, prefix_cache 11, parity 6,
+paged_parity 6, prefix_parity 5, continuous_parity 10, batch_parity 6). Parity holds for share-then-diverge, for cache-on vs cache-off,
 for **divergence inside a block rather than on a boundary** (block_size 64 — the
 only configuration that actually exercises copy-on-write), for two identical
 prompts, and under a tight pool where reclamation and preemption interact.
@@ -783,6 +785,30 @@ process that is swapping looks exactly like a process that is working**, and the
 distinguishing evidence — RSS far below the working set, CPU far below 100% —
 is not visible from the test output at all. This will matter again on rented GPU
 instances, which often have less RAM than this laptop.
+
+### B10 — the test runner could report a failing file as green
+**2026-09-17. Fixed.** Found while reading output, not from a failure.
+
+*Symptom:* `run_tests.sh` printed a bare `.` for `test_batch_parity.py` where a
+`6 passed` summary should have been.
+
+*Root cause:* the script extracted pytest's summary with `tail -2 | head -1`.
+That file prints progress lines from inside tests (`capsys.disabled()`), which
+interleave with the dots, so the captured line was not the summary. The script
+then grepped **that captured line** for `failed|error` to decide pass/fail —
+so a file that genuinely failed would have been reported green.
+
+*Fix:* match pytest's summary line explicitly against the whole output, treat a
+missing summary as a failure, and print an explicit `ALL GREEN` /
+`FAILURES PRESENT` verdict. Also added `test_prefix_parity.py`, which had been
+left out of the list.
+
+*Why it is worth keeping:* same class as the other slips this session — logic
+correct for the case in mind, applied where it does not hold. But the direction
+of failure is what matters. The 126% utilisation metric (§B8) failed *loudly*
+and caught itself; this one failed **silently toward green**, which in a test
+runner is strictly worse. A suite that cannot fail is worth exactly as much as
+no suite. Verified afterwards by running the file directly: 6 passed.
 
 ---
 
