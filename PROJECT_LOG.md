@@ -3,7 +3,7 @@
 Master log. Append-only: entries are never rewritten or removed, only added to.
 Maintained automatically as part of finishing each chunk of work.
 
-Phases map to the rung plan in `CLAUDE.md`: R0 baseline, R1 own attention + KV
+Phases map to the rung plan: R0 baseline, R1 own attention + KV
 cache, R2 static batching, R3 continuous batching, R4 paged KV cache,
 R5 prefix caching.
 
@@ -107,7 +107,7 @@ That passes parity immediately (verified 12/12) but carries a sampling policy
 inherited by accident from a checkpoint file through five more rungs and into
 the vLLM comparison.
 Why: the reference files are cheap to regenerate now and expensive to distrust
-later. `CLAUDE.md` and the results schema both claim greedy; now that is true.
+later. the project spec and the results schema both claim greedy; now that is true.
 Old references moved to `results/mac/superseded/` rather than deleted.
 Results now record the **full logits-processor stack** under `config.sampling`,
 not just a `greedy: true` flag — and `tests/test_parity.py` asserts every field
@@ -128,7 +128,7 @@ plausible. A dashboard carrying invented R4 numbers is exactly what rules 9 and
 10 exist to prevent, and it would poison the artifact this project is for.
 The hardware caveat (Mac/MPS, not GPU) is a banner at the top, not a footnote.
 
-Published: https://claude.ai/artifact/RpzegYya34hiJMEjD7XWiX
+Published: https://aditicodes7.github.io/inferno/
 
 ### 2026-09-16 — R3 policy: FCFS, prefill owns its iteration, slot-based cache
 **Chosen:** (a) **FCFS** — only the queue head is ever considered for
@@ -1167,7 +1167,7 @@ future comparison — including vLLM — must replicate it.
 **(b) Regenerate the R0 reference with `repetition_penalty=1.0`**, i.e. actual
 greedy decoding, and keep Inferno's argmax as-is. Costs two re-runs (~7 min) and
 invalidates the current reference files, but makes "greedy" mean greedy, which
-is what `CLAUDE.md` and the results files both claim.
+is what the project spec and the results files both claim.
 
 Note that the R0 records currently assert `"greedy": true`, which is not
 accurate as written. Either way the results schema should record the full

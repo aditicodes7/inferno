@@ -61,7 +61,7 @@ rather than comparing throughput across rows.
 
 All 68 tests pass on **both** Apple Silicon (MPS) and CUDA.
 
-📊 [Dashboard](https://claude.ai/artifact/RpzegYya34hiJMEjD7XWiX) ·
+📊 [Dashboard](https://aditicodes7.github.io/inferno/) ·
 📉 [Gap analysis](docs/GAP_ANALYSIS.md) ·
 📓 [Full project log](PROJECT_LOG.md) ·
 🐛 [Bug log](docs/bugs.md) ·

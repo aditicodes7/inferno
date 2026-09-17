@@ -238,7 +238,7 @@ policy inherited by accident from a JSON file in the checkpoint through five
 more rungs and into the vLLM comparison.
 
 **Why:** the reference files are cheap to regenerate now and expensive to
-distrust later. Both `CLAUDE.md` and the results schema claim greedy decoding;
+distrust later. Both the project spec and the results schema claim greedy decoding;
 after this change that claim is true.
 
 **Consequence for the schema:** results now record the full logits-processor
