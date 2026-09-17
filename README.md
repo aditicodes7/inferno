@@ -23,29 +23,65 @@ consequence of it.
 
 ## Results
 
-Six rungs, each accepted only on a number *and* a proof. **The workloads are not
-identical across rungs** — each rung is measured against the design it replaces,
-under the workload that exposes what it changed — so read down the "measured
-against" column rather than comparing throughput figures across rows.
+**The headline, on a Tesla T4:**
 
-| Rung | What changed | Headline result | Measured against | Proof |
+| | HuggingFace (sdpa) | **Inferno** | vLLM 0.29 |
+|---|---|---|---|
+| single-stream decode | 31.76 tok/s | **38.88 tok/s** (+22.4%) | 174.52 tok/s (**4.49×**) |
+| batched, 50 prompts | — | **643.82 tok/s** (bs=32) | 2547.38 tok/s (**3.96×**) |
+| TTFT p50 | 36.6 ms | **29.1 ms** | 20.7 ms |
+
+Inferno beats HuggingFace by 22% and loses to vLLM by ~4×. **[Why, in detail →
+docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md)** — short version: the gap is *not*
+the paged-attention gather, which was the hypothesis held throughout this
+project. R1, which has no block table and no gather at all, is already 4.49×
+behind. The gap is CUDA graph capture, `torch.compile` and fused kernels —
+things neither Inferno nor HuggingFace does, which is why those two sit within
+22% of each other while vLLM is 4.5× above both.
+
+**And the techniques themselves work.** On the same shared-document workload,
+Inferno's prefix cache gives **+20.1% throughput at an 83.8% hit rate**, against
+vLLM's **+19.3% at 86.1%**. The ideas transfer; the execution layer does not.
+
+### The rungs
+
+Each accepted only on a number *and* a proof. **The workloads are not identical
+across rungs** — each is measured against the design it replaces, under the
+workload that exposes what it changed — so read the "measured against" column
+rather than comparing throughput across rows.
+
+| Rung | What changed | Result (Tesla T4) | Measured against | Proof |
 |---|---|---|---|---|
-| **R0** | HuggingFace `generate()` | 36.29 tok/s, TTFT p50 54.1 ms | — (the floor) | reruns within 2.8%; token-identical on repeat *and* reversed order |
-| **R1** | Hand-written forward pass + KV cache | 29.21 tok/s (+9.1% vs HF eager, −19.5% vs HF sdpa) | HuggingFace, same attention backend | 50/50 token-identical |
-| **R2** | Static batching, left-padded | **~18% of decode steps wasted**; worst request blocked 120 steps | R1 | fp32 exact at batch 1/2/4/8/16 |
-| **R3** | Continuous batching | **5.3× arrival rate** at p95 TTFT < 500 ms (0.3 → 1.6 req/s) | static batching, same Poisson arrivals | identical across 3 arrival patterns × 3 slot counts |
-| **R4** | Paged KV cache | **8× concurrent sequences** at fixed 48 MB (7 → 56); utilisation 15.8% → 86.0% | contiguous reservation, same memory | parity at block size 4/16/64; zero blocks leaked |
-| **R5** | Prefix caching | **4.89× TTFT on a cache hit** (1730.8 → 354.2 ms); 85.3% of prefill never computed | the same engine with the cache off | parity including share-then-diverge |
+| **R0** | HuggingFace `generate()` | 31.76 tok/s, TTFT p50 36.6 ms | — (the floor) | reruns within 2.8%; token-identical on repeat *and* reversed order |
+| **R1** | Hand-written forward pass + KV cache | 38.88 tok/s (**+22.4%** vs HF) | HuggingFace, same attention backend | 50/50 token-identical |
+| **R2** | Static batching, left-padded | **17.9% of decode steps wasted**; worst request blocked 120 steps | R1 | fp32 exact at batch 1/2/4/8/16 |
+| **R3** | Continuous batching | **16× arrival rate** at p95 TTFT < 500 ms (0.25 → 4.0 req/s) | static batching, same Poisson arrivals | identical across 3 arrival patterns × 3 slot counts |
+| **R4** | Paged KV cache | **9.1× concurrent sequences** at fixed 48 MB (7 → 64); utilisation 17.3% → 97.2% | contiguous reservation, same memory | parity at block size 4/16/64; zero blocks leaked across 24–35 preemptions |
+| **R5** | Prefix caching | **83.8% hit rate**, 85.3% of prefill never computed, +20.1% throughput | the same engine with the cache off | parity including share-then-diverge |
 
-**Hardware: MacBook, Apple Silicon, MPS backend, float16, Qwen2.5-0.5B-Instruct.
-These are not GPU numbers.** See [What's honest about these numbers](#whats-honest-about-these-numbers).
+All 68 tests pass on **both** Apple Silicon (MPS) and CUDA.
 
 📊 [Dashboard](https://claude.ai/artifact/RpzegYya34hiJMEjD7XWiX) ·
+📉 [Gap analysis](docs/GAP_ANALYSIS.md) ·
 📓 [Full project log](PROJECT_LOG.md) ·
 🐛 [Bug log](docs/bugs.md) ·
 ⚖️ [Decisions](docs/decisions.md)
 
----
+### Four conclusions that moving to GPU destroyed
+
+Every rung was first measured on Apple Silicon. Four findings did not survive
+CUDA, and that is the most useful result in the project:
+
+| Concluded on MPS | On CUDA |
+|---|---|
+| Throughput peaks at *exactly* batch 16 and falls back at 20 — reproducible three times | **Dead.** Monotonic 1→32. An MPS kernel artifact. |
+| "The textbook batching argument does not hold here" — batching bought ~8% | **Dead.** 5.5× from batch 1→8. It holds; MPS was the problem. |
+| Block size 16 is clearly best | **Dead.** Flat across 4/16/64 on CUDA, and 16 is the *slowest*. |
+| Prefix caching cuts TTFT 4.89× | **Overstated.** 1.44× — prefill costs a T4 only ~42 ms, so there is little to save. |
+
+All four were measured carefully, reproduced, and written down with confidence.
+They were properties of one platform mistaken for properties of the technique,
+and no amount of care on that platform could have caught it.
 
 ## The correctness spine
 
@@ -124,20 +160,21 @@ copies resident and swaps itself to a standstill — 25 minutes at 48 MB RSS and
 
 ## What's honest about these numbers
 
-- **No GPU run has happened.** `results/gpu/` is empty. Every figure above is
-  Mac/MPS.
-- **Three findings are suspect until re-measured on real hardware:** throughput
-  peaks at *exactly* batch 16 and falls back at 20 (reproducible across three
-  runs, unexplained); static batching buys only ~8% from batch 1 to 8, against
-  a theory that predicts much more; and paged attention came out ~8% *faster*
-  than contiguous at equal concurrency, which contradicts the prediction.
-- **The gather is unmeasured against a fused kernel.** Both the paged and
-  contiguous caches materialise a contiguous tensor, so every comparison here
-  measures one gather against another. vLLM's PagedAttention walks the block
-  table inside the kernel and never materialises at all. This is the largest
-  expected line item in the gap analysis and it is currently unquantified.
-- **Inferno's prefill is 1.8–4.6× slower than HuggingFace's eager path.** Four
-  candidate causes, none profiled.
+- **One GPU, one model, one session.** Tesla T4, 0.5B parameters. A 7B model on
+  an A100 would move every ratio here.
+- **The 4× gap is named but not decomposed.** The gap analysis identifies four
+  causes and ranks them by argument. No profiler was run, and that ranking is
+  reasoned rather than measured.
+- **Token agreement with vLLM is 42/50, not 50/50.** Expected — different kernels
+  reduce in different orders and greedy decoding amplifies the last bit. But it
+  means a small part of the timing difference could be different work rather
+  than the same work done faster. Unquantified.
+- **vLLM was not tuned.** Defaults, no `--max-num-seqs` tuning, no quantization.
+  A tuned vLLM would be faster still.
+- **torch version matters more than expected.** vLLM's install downgraded torch
+  2.10 → 2.13, and Inferno lost 7.6% on that change alone. Every comparison
+  figure here was re-measured afterwards; the earlier ones would have overstated
+  Inferno.
 
 ---
 
@@ -176,13 +213,15 @@ have found it.
 
 ## What is not done
 
-- GPU runs for every rung
-- vLLM installed and run on identical hardware and workload
-- **The gap analysis** — the most important deliverable, and it depends on both
-  of the above
+- **The 4× is not decomposed.** Profiling with Nsight or `torch.profiler` would
+  apportion it between graph capture, compilation and the attention kernel.
+  Currently those are ranked by argument, not measurement.
+- **Chunked prefill.** R3 gives prefill its own iteration, which stalls every
+  running request. vLLM mixes prefill into the decode batch.
+- **The obvious optimisations the analysis points at** — CUDA graph capture of
+  the decode step, `torch.compile` on the decoder block, a fused attention
+  kernel. The gap analysis argues these are where the 4× lives; none is
+  implemented.
 
-The expected finding is already visible from two independent directions: at R4,
-paging beat contiguous at equal concurrency because *both* gather; at R5, a
-cache hit computes 8.7% of a prompt's tokens but still takes 23% of a cold
-prefill's time. The gather does not shrink. Quantifying that against a fused
-kernel is what remains.
+None of these are gaps in the deliverable. They are what a version 2 would do,
+and the analysis says which ones would actually pay.
