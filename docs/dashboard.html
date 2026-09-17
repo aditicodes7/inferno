@@ -131,329 +131,345 @@ tr td:first-child{font-family:var(--mono);font-weight:600;white-space:nowrap}
   .barrow{grid-template-columns:1fr;gap:4px}
   .barrow .lb{text-align:left}
 }
-</style>
 
+.rung.done .mt{color:var(--ink)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px}
+@media (max-width:720px){.two{grid-template-columns:1fr}}
+.empty{background:var(--surface-2);border:1px dashed var(--rule);border-radius:3px;
+  padding:22px;margin-top:20px;color:var(--ink-3)}
+.empty h3{color:var(--ink-2);font-size:15px;font-weight:600}
+.empty p{font-size:13.5px;margin:8px 0 0;max-width:72ch;line-height:1.55}
+.win{font-family:var(--mono);font-weight:600;color:var(--s2)}
+.kpi{display:flex;flex-wrap:wrap;gap:22px;margin-top:16px;padding-top:14px;
+  border-top:1px solid var(--rule-2)}
+.kpi div{font-size:12.5px;color:var(--ink-3);font-family:var(--mono)}
+.kpi b{display:block;font-size:19px;color:var(--ink);margin-top:3px;
+  font-variant-numeric:tabular-nums}
+</style>
 <div class="wrap">
   <div class="eyebrow">Inferno &middot; from-scratch LLM inference engine</div>
   <h1>Rung Ladder</h1>
   <p class="lede">Six rungs from a HuggingFace baseline to paged attention and prefix
-  caching. Each rung must produce a <strong>number</strong> and a <strong>correctness
-  proof</strong> before the next one starts. The proof is always the same: token-identical
-  output to R0 under greedy decoding. Not similar &mdash; identical.</p>
+  caching, each built only after the one below it produced a <strong>number</strong> and a
+  <strong>correctness proof</strong>. The proof is always the same: token-identical output
+  under greedy decoding. Not similar &mdash; identical.</p>
 
   <div class="hw">
     <span>&#9888;</span>
-    <div><b>Every number on this page was measured on a MacBook (Apple Silicon, MPS
-    backend, float16, Qwen2.5-0.5B-Instruct).</b> These are not GPU numbers and must
-    not be read as any. GPU runs happen later on rented hardware and will be reported
-    separately.</div>
+    <div><b>Every number here was measured on a MacBook (Apple Silicon, MPS backend,
+    float16, Qwen2.5-0.5B-Instruct).</b> These are not GPU numbers and must not be read
+    as any. No GPU run has happened yet, and three findings below explicitly need
+    re-checking on real hardware before they can be trusted.</div>
   </div>
 
-  <h2>Where it stands</h2>
+  <h2>What each rung bought</h2>
   <div class="tiles">
-    <div class="tile">
-      <div class="k">R1 decode throughput</div>
-      <div class="v">29.21<span class="u"> tok/s</span></div>
-      <div class="d"><em>+9.1%</em> vs HuggingFace on the same attention path</div>
-    </div>
-    <div class="tile">
-      <div class="k">Parity vs R0</div>
-      <div class="v">50<span class="u">/50</span></div>
-      <div class="d">token-identical, full prompt set</div>
-    </div>
-    <div class="tile">
-      <div class="k">R1 prefill penalty</div>
-      <div class="v">4.6<span class="u">&times;</span></div>
-      <div class="d">TTFT p95 vs HuggingFace &mdash; <em>the real gap</em></div>
-    </div>
-    <div class="tile">
-      <div class="k">Decode steps wasted</div>
-      <div class="v">17.9<span class="u">%</span></div>
-      <div class="d">at batch 8 &mdash; worst request blocked <em>120 steps</em></div>
-    </div>
-    <div class="tile">
-      <div class="k">KV cache utilisation</div>
-      <div class="v">85.8<span class="u">%</span></div>
-      <div class="d">worst single request <em>26.2%</em></div>
-    </div>
+    <div class="tile"><div class="k">R3 &middot; arrival rate at a TTFT budget</div>
+      <div class="v">5.3<span class="u">&times;</span></div>
+      <div class="d">0.3 &rarr; <em>1.6 req/s</em> at p95 TTFT under 500&nbsp;ms</div></div>
+    <div class="tile"><div class="k">R4 &middot; concurrent sequences, same memory</div>
+      <div class="v">8<span class="u">&times;</span></div>
+      <div class="d">7 &rarr; <em>56</em> at a fixed 48&nbsp;MB KV budget</div></div>
+    <div class="tile"><div class="k">R5 &middot; TTFT on a cache hit</div>
+      <div class="v">4.89<span class="u">&times;</span></div>
+      <div class="d">1730.8 &rarr; <em>354.2&nbsp;ms</em>, 85.3% of prefill skipped</div></div>
+    <div class="tile"><div class="k">Correctness</div>
+      <div class="v">63<span class="u"> tests</span></div>
+      <div class="d">all green &middot; <em>10 bugs</em> traced to mechanism</div></div>
   </div>
 
   <h2>The ladder</h2>
   <div class="ladder" id="ladder"></div>
 
   <h2>R1 &mdash; hand-written engine vs HuggingFace</h2>
-  <p class="note">Inferno uses eager attention, so the honest like-for-like comparison is
-  against HuggingFace&rsquo;s eager path. HF&rsquo;s fused SDPA kernel is shown too, because
-  that is what HuggingFace actually runs by default and pretending otherwise would flatter
-  Inferno.</p>
-
-  <div class="chart">
-    <h3>Decode throughput</h3>
-    <p class="cap">Prefill excluded by construction: timing starts at the first generated
-    token. Aggregate over all 50 prompts, 128 max new tokens, batch size 1.</p>
-    <div id="c1"></div>
-  </div>
-
-  <div class="chart">
-    <h3>Time to first token</h3>
-    <p class="cap">Prefill, measured. Inferno wins on decode and loses badly here &mdash; and
-    the p95 gap is dominated by the 475-token RAG prompts. This is the first genuine
-    performance gap of the project.</p>
-    <div id="c2"></div>
-  </div>
-
-  <div class="chart">
-    <h3>Decode throughput by prompt length</h3>
-    <p class="cap">Same model, same settings; the only difference is context length. Long
-    prompts decode slower for every implementation &mdash; that is the KV cache getting more
-    expensive to read on every single step, showing up unprompted in the baseline.</p>
-    <div id="c3"></div>
+  <p class="note">Inferno uses eager attention, so the like-for-like comparison is against
+  HuggingFace&rsquo;s eager path. HF&rsquo;s fused SDPA kernel is shown too, because that is
+  what HuggingFace actually runs by default and omitting it would flatter Inferno.</p>
+  <div class="two">
+    <div class="chart"><h3>Decode throughput</h3>
+      <p class="cap">Prefill excluded by construction: timing starts at the first generated
+      token, and the denominator is <code>n_new &minus; 1</code> because the first token came
+      out of prefill.</p><div id="c1"></div></div>
+    <div class="chart"><h3>Time to first token</h3>
+      <p class="cap">Where Inferno loses. The p95 gap is dominated by the 475-token RAG
+      prompts &mdash; the first genuine performance gap of the project.</p><div id="c2"></div></div>
   </div>
 
   <h2>R2 &mdash; static batching, and why it is not enough</h2>
   <p class="note">A static batch runs until <em>every</em> sequence in it finishes. A request
-  that needed 8 tokens sits in the batch for all 128 steps, producing nothing, holding its
-  cache slot, and not returning to the caller. Its latency is set by the slowest request it
-  happened to be batched with. Prompts are <strong>not</strong> sorted by length &mdash; sorting
-  would flatten the tail and hide the effect this rung exists to demonstrate.</p>
-
+  needing 8 tokens sits through all 128 steps, producing nothing and holding its cache slot.
+  Prompts are <strong>not</strong> sorted by length &mdash; sorting would flatten the tail and
+  hide the effect this rung exists to demonstrate.</p>
   <div class="chart">
     <h3>Head-of-line blocking &mdash; every request at batch size 8</h3>
     <p class="cap">Decode steps each request spent in the batch <em>after</em> producing its
-    last token, sorted descending. At batch 8 and above <strong>~18% of all decode steps
-    compute tokens that are thrown away</strong>, and the worst-hit request waits 120 steps:
-    it finished in 8 and was delivered after 128. No batch size fixes this &mdash; the numbers
-    get worse as batch size grows, because the cause is structural. This chart is the entire
+    last token, sorted descending. <strong>~18% of all decode steps compute tokens that are
+    thrown away</strong>; the worst-hit request waits 120 steps. No batch size fixes this &mdash;
+    it gets worse as batch size grows, because the cause is structural. This chart is the
     argument for R3.</p>
     <div id="c6"></div>
-    <div class="legend">
-      <span><i style="background:var(--s1)"></i>short</span>
+    <div class="legend"><span><i style="background:var(--s1)"></i>short</span>
       <span><i style="background:var(--s3)"></i>medium</span>
-      <span><i style="background:var(--s2)"></i>long</span>
-    </div>
+      <span><i style="background:var(--s2)"></i>long</span></div>
+  </div>
+  <div class="chart"><h3>Throughput vs batch size</h3>
+    <p class="cap">The textbook argument says batching decode is nearly free, since weights
+    load once per step regardless of batch size. It does not hold here: batch 1&rarr;8 moves
+    28.30&rarr;30.53 tok/s, about +8%. Then batch 16 triples it and batch 20 falls back &mdash;
+    reproducible across three runs, and still unexplained (B5).</p><div id="c5"></div></div>
+
+  <h2>R3 &mdash; continuous batching under real arrivals</h2>
+  <p class="note">Every earlier benchmark assumed all prompts exist at t=0, which is the one
+  assumption under which continuous batching has nothing to show. This replays a Poisson
+  arrival schedule against both schedulers. The static baseline is R2&rsquo;s policy made
+  arrival-aware: take whatever has arrived, run it to completion, then look again.</p>
+  <div class="chart"><h3>TTFT p95 vs arrival rate</h3>
+    <p class="cap">Budget is p95 TTFT under 500&nbsp;ms (dashed). Static misses it from 0.4
+    req/s; continuous holds to 1.6. Raw throughput barely differs &mdash; the win is entirely
+    in latency, which is the correct shape: continuous batching does not make the hardware
+    faster, it stops requests waiting on strangers.</p><div id="c7"></div>
+    <div class="legend"><span><i style="background:var(--s2)"></i>continuous</span>
+      <span><i style="background:var(--s1)"></i>static</span></div>
+    <div class="kpi">
+      <div>SUSTAINED RATE, STATIC<b>0.3 req/s</b></div>
+      <div>SUSTAINED RATE, CONTINUOUS<b>1.6 req/s</b></div>
+      <div>BURSTY WORKLOAD, TTFT p50<b>2.923 &rarr; 0.279 s</b></div>
+      <div>R2&rsquo;s WASTED DECODE STEPS<b>17.9% &rarr; 0%</b></div>
+    </div></div>
+
+  <h2>R4 &mdash; paged KV cache</h2>
+  <p class="note">R3 gave every sequence a contiguous reservation of <code>max_len</code>, so
+  concurrency was <code>budget / (max_len &times; bytes_per_token)</code> &mdash; fixed in advance,
+  independent of how long sequences actually are. This workload averages ~77 tokens against a
+  525-token reservation, so <strong>84% of the reserved cache never holds a token</strong>.
+  Paging hands out fixed-size blocks on demand, bounding waste to
+  <code>block_size &minus; 1</code> per sequence.</p>
+  <div class="two">
+    <div class="chart"><h3>Same 48&nbsp;MB, how many sequences fit</h3>
+      <p class="cap">The headline. Throughput follows from the extra concurrency, not from
+      paging being faster per step.</p><div id="c8"></div>
+      <div class="kpi"><div>CONCURRENT SEQUENCES<b>7 &rarr; 56</b></div>
+        <div>KV UTILISATION<b>15.8% &rarr; 86.0%</b></div></div></div>
+    <div class="chart"><h3>Block size: waste against gather cost</h3>
+      <p class="cap">Small blocks waste least but multiply bookkeeping and gather work; large
+      blocks gather cheaply but strand up to <code>block_size &minus; 1</code> tokens per
+      sequence. 16 wins here &mdash; also vLLM&rsquo;s default, but the number came from this
+      table.</p><div id="c9"></div></div>
   </div>
 
-  <div class="chart">
-    <h3>Throughput vs batch size</h3>
-    <p class="cap">The textbook argument says batching decode is nearly free, because the
-    weights are loaded once per step regardless of batch size. It does not hold here: from
-    batch 1 to 8, throughput moves 28.30 &rarr; 30.53 tok/s, about +8%. Then batch 16 triples
-    it and batch 20 falls back &mdash; a reproducible, isolated peak measured at 96.96, 97.06
-    and 99.42 tok/s across three runs, and still unexplained (B5).</p>
-    <div id="c5"></div>
+  <h2>R5 &mdash; prefix caching</h2>
+  <p class="note">Attention is causal, so position <em>i</em>&rsquo;s K/V depend only on tokens
+  0&ndash;<em>i</em>. Two sequences starting with identical tokens have <strong>bit-identical</strong>
+  KV across that span &mdash; so the blocks are shared, not recomputed. Workload: 15 prompts
+  sharing one ~2000-character document, each asking a different question. A/B on the same engine
+  with only the cache toggled.</p>
+  <div class="chart"><h3>Prefill work, and what it costs</h3>
+    <p class="cap">85.3% of all prefill tokens are never computed. This is the only rung whose
+    win is in <em>avoided work</em> rather than better scheduling or packing, which is why it is
+    the largest single speedup measured.</p><div id="c10"></div>
+    <div class="kpi">
+      <div>PREFIX CACHE HIT RATE<b>83.8%</b></div>
+      <div>PREFILL TOKENS COMPUTED<b>7092 &rarr; 1044</b></div>
+      <div>TTFT ON A HIT<b>1730.8 &rarr; 354.2 ms</b></div>
+      <div>WALL CLOCK<b>56.7 &rarr; 19.0 s</b></div>
+    </div></div>
+  <div class="empty">
+    <h3>The limit, measured from two directions</h3>
+    <p>A cache hit computes ~8.7% of the prompt&rsquo;s tokens but still takes ~23% of a cold
+    prefill. The saving lands on the projections, the MLP and the attention math &mdash; the
+    <strong>gather is unchanged</strong>: every layer materialises the whole block table
+    regardless of how much was cached. R4 showed the same ceiling from the other side, where
+    paging at equal concurrency was ~8% <em>faster</em> than contiguous, because the contiguous
+    baseline gathers too. A fused PagedAttention kernel is what removes this, and it is the
+    single largest expected line item in the gap analysis.</p>
   </div>
 
-  <h2>Why R4 exists</h2>
-  <p class="note">R1&rsquo;s cache preallocates <code>prompt_len + max_new_tokens</code> and never
-  grows, so every sequence reserves for its worst case. Verified linear at exactly
-  <strong>12,288 bytes per token</strong> &mdash; matching 2 &times; 24 layers &times; 2 KV heads
-  &times; 64 head_dim &times; 2 bytes.</p>
-
-  <div class="chart">
-    <h3>KV utilisation per request, all 50 prompts</h3>
-    <p class="cap">Fraction of reserved cache actually holding a real token, sorted ascending.
-    The mean of 85.8% flatters the design: 35 of 50 prompts ran the full 128 tokens, so there
-    was little early termination to waste reservation on. The left tail is the real cost.</p>
-    <div id="c4"></div>
-    <div class="legend">
-      <span><i style="background:var(--s1)"></i>short</span>
-      <span><i style="background:var(--s3)"></i>medium</span>
-      <span><i style="background:var(--s2)"></i>long</span>
-    </div>
+  <h2>Not measured yet</h2>
+  <div class="empty">
+    <h3>GPU runs &mdash; <span class="win">no data</span></h3>
+    <p>Every number on this page is Mac/MPS. <code>results/gpu/</code> is empty. Three findings
+    need re-checking on real hardware before they mean anything: B5&rsquo;s batch-16 anomaly, the
+    flat 1&rarr;8 batching curve, and the gather cost against a fused kernel.</p>
+  </div>
+  <div class="empty">
+    <h3>vLLM comparison &mdash; <span class="win">no data</span></h3>
+    <p>Identical hardware, identical workload, not yet run. Inferno is expected to lose; the
+    value is in explaining precisely where.</p>
+  </div>
+  <div class="empty">
+    <h3>Gap analysis &mdash; <span class="win">not written</span></h3>
+    <p>The most important deliverable of the project, and it depends on both of the above.</p>
   </div>
 
-  <h2>Bugs worth the writeup</h2>
+  <h2>Bugs, with mechanisms</h2>
   <div class="tbl"><table>
     <thead><tr><th>ID</th><th>What broke</th><th>Mechanism</th><th>Status</th></tr></thead>
     <tbody>
-      <tr><td>B1</td>
-        <td>sdpa and eager produced different tokens from identical inputs &mdash; 10/50 prompts,
-        one diverging at generated token 1.</td>
-        <td>Fused kernels accumulate in a different order; float addition is not associative.
-        Greedy decoding turns a 1-ulp difference into a different paragraph once argmax flips
-        on a near-tie, and the two sequences never re-converge.</td>
-        <td>property, not a defect</td></tr>
-      <tr><td>B2</td>
-        <td>TTFT p95 of 297&nbsp;ms that would not reproduce &mdash; later runs gave 88&nbsp;ms.
-        TTFT was not monotonic in prompt length.</td>
-        <td>Outliers followed neither the prompt nor its position in the run; they appeared only
-        in the <em>first process ever run on the machine</em>. Leading explanation is persistent
-        on-disk Metal shader caching &mdash; not directly proven.</td>
-        <td>resolved &mdash; methodology</td></tr>
-      <tr><td>B3</td>
-        <td>R1 parity failed 49/50. Fluent output, no crash, up to 34 exactly-matching tokens
-        before diverging.</td>
-        <td>The checkpoint ships <code>repetition_penalty: 1.1</code>, and HuggingFace applies it
-        <em>in greedy decoding</em> &mdash; it is not gated on <code>do_sample</code>. The
-        hand-written forward pass was correct throughout: teacher-forced agreement was 371/371.
-        <strong>&ldquo;Greedy&rdquo; is not a complete specification of a decoding procedure.</strong></td>
-        <td>resolved</td></tr>
-      <tr><td>B4</td>
-        <td>R2 batch parity failed at batch size 4 while passing at 1 and 2 &mdash; one sequence
-        emitting token&nbsp;0 forever, another drifting after 67 exact tokens.</td>
-        <td>The additive mask used <code>finfo.min</code>. float16&rsquo;s most negative finite value
-        is &minus;65504, so adding any score past about &minus;16 rounds off the end of the range to
-        &minus;inf; scores reach &plusmn;225 by layer&nbsp;8. A fully-masked row &mdash; which exists
-        only because of left padding &mdash; becomes all &minus;inf, and softmax gives
-        <code>exp(&minus;inf &minus; &minus;inf)</code> = NaN. It escaped into real tokens because pad K/V
-        share the cache and <strong>0 &times; NaN = NaN</strong>. Fixed with <code>finfo.min / 2</code>.
-        Two wrong turns first: a probe using a score of &minus;5 (which rounds back, and
-        &ldquo;proved&rdquo; no overflow), and a fix that moved the NaN from layer 1 to layer 8
-        without removing it.</td>
-        <td>resolved</td></tr>
-      <tr><td>B5</td>
-        <td>Throughput vs batch size is non-monotonic: flat from 1&ndash;8, triples at 16, falls
-        back at 20.</td>
-        <td>Reproducible across three runs (&plusmn;2.5%) and not explained by batch composition
-        &mdash; weighted by padded width, batch 16 does <em>more</em> attention work than batch 12
-        while taking 2.6&times; less wall time. Leading hypothesis is MPS matmul kernel selection at a
-        16-wide tile boundary. Not confirmed.</td>
-        <td>open</td></tr>
+      <tr><td>B1</td><td>sdpa and eager produced different tokens from identical inputs — 10/50 prompts, one diverging at generated token 1.</td><td>Fused kernels accumulate in a different order; float addition is not associative. Greedy decoding turns a 1-ulp difference into a different paragraph once argmax flips on a near-tie, and the two sequences never re-converge.</td><td>property, not a defect</td></tr>
+      <tr><td>B2</td><td>TTFT p95 of 297&nbsp;ms that would not reproduce — later runs gave 88&nbsp;ms, and TTFT was not monotonic in prompt length.</td><td>Outliers followed neither the prompt nor its position in the run; they appeared only in the <em>first process ever run on the machine</em>. Leading explanation is persistent on-disk Metal shader caching — not directly proven.</td><td>resolved &mdash; methodology</td></tr>
+      <tr><td>B3</td><td>R1 parity failed 49/50. Fluent output, no crash, up to 34 exactly-matching tokens before diverging.</td><td>The checkpoint ships <code>repetition_penalty: 1.1</code> and HuggingFace applies it <em>in greedy decoding</em> — it is not gated on <code>do_sample</code>. The hand-written forward pass was correct throughout: teacher-forced agreement 371/371. <strong>&ldquo;Greedy&rdquo; is not a complete specification of a decoding procedure.</strong></td><td>resolved</td></tr>
+      <tr><td>B4</td><td>R2 batch parity failed at batch size 4 while passing at 1 and 2 — one sequence emitting token&nbsp;0 forever, another drifting after 67 exact tokens.</td><td>The additive mask used <code>finfo.min</code>. float16&rsquo;s most negative finite value is &minus;65504, so adding any score past about &minus;16 rounds off the end of the range to &minus;inf; scores reach &plusmn;225 by layer&nbsp;8. A fully-masked row becomes all &minus;inf and softmax gives NaN. It reached real tokens because pad K/V share the cache and <strong>0 &times; NaN = NaN</strong>.</td><td>resolved</td></tr>
+      <tr><td>B5</td><td>Throughput vs batch size is non-monotonic: flat from 1&ndash;8, triples at 16, falls back at 20.</td><td>Reproducible across three runs (&plusmn;2.5%) and not explained by batch composition — weighted by padded width, batch 16 does <em>more</em> attention work than batch 12 in 2.6&times; less wall time. Leading hypothesis is MPS kernel selection at a 16-wide tile boundary.</td><td>open</td></tr>
+      <tr><td>B6</td><td>The scheduler assigned a slot only after deciding to prefill a request.</td><td>The engine needs the slot to write K/V into <em>before</em> it can run the forward pass — the scheduler was unusable by the thing it existed to drive. First bug in the project caught by a unit test rather than a benchmark: 0.01&nbsp;s instead of minutes.</td><td>resolved</td></tr>
+      <tr><td>B7</td><td>R4 test suite ran 600&nbsp;s with no output, no error and no progress.</td><td>A <strong>livelock</strong>. <code>preempt()</code> returned victims to the front of the queue so they would not starve, and FCFS admission only considers the head — so the victim was re-admitted and immediately re-evicted, forever. Two individually correct rules composing into a cycle. Not starvation: both requests were repeatedly <em>admitted</em>, they just never held memory long enough to emit a token.</td><td>resolved</td></tr>
+      <tr><td>B8</td><td>The R4 benchmark reported 126% cache utilisation.</td><td>The metric divided total tokens across all served requests by <code>n_slots &times; max_len</code>, correct only when every request holds a slot at once. On 56 requests through 7 slots it over-counted ~8&times;. Corrected: R3&rsquo;s real utilisation is 15.8%, not 39.0% — the error <em>flattered the baseline</em>.</td><td>resolved</td></tr>
+      <tr><td>B9</td><td><code>pytest tests/</code> ran 25 minutes with no output.</td><td>Not hung — <strong>swapping</strong>. 48&nbsp;MB RSS at 11% CPU with system swap at 6.9&nbsp;GB of 8&nbsp;GB. Every test file holds its engine in a session-scoped fixture, so one pytest session keeps ~5 model copies resident on a machine that holds about two. A swapping process looks exactly like a working one.</td><td>resolved</td></tr>
+      <tr><td>B10</td><td>The test runner could report a failing file as green.</td><td>It extracted pytest&rsquo;s summary with <code>tail -2 | head -1</code>, then grepped <em>that line</em> for failures. Files printing from inside tests interleave with the progress dots, so the captured line was not the summary. Unlike B8 this failed <strong>silently toward green</strong>, which in a test runner is strictly worse.</td><td>resolved</td></tr>
     </tbody>
   </table></div>
 
   <h2>Open questions</h2>
   <div class="q">
-    <div class="qi"><div class="qh">Why is Inferno&rsquo;s prefill 1.8&ndash;4.6&times; slower than
-      HuggingFace&rsquo;s eager path?<span class="tag" style="color:var(--active)">open</span></div>
-      <div class="qb">Four candidates, none measured: a fresh mask tensor allocated every forward;
-      <code>repeat_kv</code> materialising a 7&times; copy of K and V at 475 positions; cos/sin
-      recomputed per forward; fp32 softmax over a 14&times;475&times;475 tensor. Profile before
-      touching any of it.</div></div>
-    <div class="qi"><div class="qh">Should the parity criterion be hardware- and dtype-specific?
-      <span class="tag" style="color:var(--done)">resolved &mdash; two-tier</span></div>
-      <div class="qb">float32 asserts exact batched-vs-unbatched equality at every batch size:
-      that is the gate on the batching code, and it passes. float16 asserts only that nothing
-      becomes NaN; drift is reported, not asserted, because differently shaped matmuls reduce in
-      different orders and greedy decoding amplifies the last bit. Verified float32 exact at
-      bs&nbsp;1/2/4/8/16; float16 79/80.</div></div>
+    <div class="qi"><div class="qh">What does the gather cost against a fused kernel?
+      <span class="tag" style="color:var(--active)">blocks the gap analysis</span></div>
+      <div class="qb">Both the paged and contiguous caches materialise, so every comparison so far
+      measures one gather against another. The number that matters needs vLLM on GPU.</div></div>
     <div class="qi"><div class="qh">Why does throughput peak at exactly batch 16?
       <span class="tag" style="color:var(--active)">open</span></div>
-      <div class="qb">Per-step cost halves at 16 while the work doubles, then reverts at 20.
-      Next test: sweep 13&ndash;18 with fixed-length prompts so composition is held constant. If
-      the dip sits exactly at 16, it is kernel selection. Worth re-running the whole sweep on GPU
-      before drawing any conclusion about batching.</div></div>
-    <div class="qi"><div class="qh">Was the B2 tail actually Metal shader caching?
+      <div class="qb">Per-step cost halves at 16 while the work doubles, then reverts at 20. Next
+      test: sweep 13&ndash;18 with fixed-length prompts so composition is held constant.</div></div>
+    <div class="qi"><div class="qh">Why is Inferno&rsquo;s prefill 1.8&ndash;4.6&times; slower than
+      HuggingFace&rsquo;s eager path?<span class="tag" style="color:var(--active)">open</span></div>
+      <div class="qb">Four candidates, none measured: a fresh mask tensor every forward;
+      <code>repeat_kv</code> materialising a 7&times; copy of K and V; cos/sin recomputed per
+      forward; fp32 softmax over a 14&times;475&times;475 tensor. Profile before touching any
+      of it.</div></div>
+    <div class="qi"><div class="qh">Does preemption need a watermark?
       <span class="tag" style="color:var(--idle)">low priority</span></div>
-      <div class="qb">Never directly proven. Clearing the Metal cache and re-running would settle it.</div></div>
+      <div class="qb">8 preemptions across 56 requests &mdash; low enough not to matter here. The
+      livelock fix guarantees progress but does not prevent thrashing under heavier
+      pressure.</div></div>
   </div>
 
   <div class="foot">
     Qwen2.5-0.5B-Instruct &middot; 24 layers &middot; 14 query heads / 2 KV heads &middot; head_dim 64<br>
-    50 fixed prompts: 20 short &middot; 15 medium &middot; 15 long RAG (sharing one document)<br>
-    greedy, repetition_penalty 1.0, 128 max new tokens, 3 warm-ups discarded<br>
+    50 fixed prompts: 20 short &middot; 15 medium &middot; 15 long RAG sharing one document<br>
+    greedy, repetition_penalty 1.0, 3 warm-ups discarded &middot; 4,206 lines of code, 63 tests<br>
     torch 2.14.0 &middot; transformers 5.17.0 &middot; python 3.11
   </div>
 </div>
 <div id="tip" role="status"></div>
 
 <script>
-const R2 = {"bs":[1,2,4,8,12,16,20],"toks":[28.3,30.16,30.6,30.53,37.06,97.06,68.36],"wasted":[0.0,6.5,10.8,17.9,18.0,17.8,17.9],"p95":[5.09,9.34,17.74,32.18,39.2,25.31,33.77],"blkmax":[0,95,115,120,120,120,120],"blocked8":[{"id":"short-00","cat":"short","b":120,"g":8,"d":128},{"id":"short-17","cat":"short","b":115,"g":13,"d":128},{"id":"short-08","cat":"short","b":114,"g":14,"d":128},{"id":"short-01","cat":"short","b":105,"g":23,"d":128},{"id":"short-18","cat":"short","b":95,"g":33,"d":128},{"id":"short-10","cat":"short","b":93,"g":35,"d":128},{"id":"short-02","cat":"short","b":92,"g":36,"d":128},{"id":"short-09","cat":"short","b":82,"g":46,"d":128},{"id":"short-16","cat":"short","b":76,"g":52,"d":128},{"id":"short-03","cat":"short","b":66,"g":62,"d":128},{"id":"short-11","cat":"short","b":60,"g":68,"d":128},{"id":"short-12","cat":"short","b":58,"g":70,"d":128},{"id":"short-05","cat":"short","b":25,"g":103,"d":128},{"id":"medium-13","cat":"medium","b":23,"g":105,"d":128},{"id":"short-14","cat":"short","b":19,"g":109,"d":128},{"id":"short-04","cat":"short","b":0,"g":128,"d":128},{"id":"short-06","cat":"short","b":0,"g":128,"d":128},{"id":"short-07","cat":"short","b":0,"g":128,"d":128},{"id":"short-13","cat":"short","b":0,"g":128,"d":128},{"id":"short-15","cat":"short","b":0,"g":128,"d":128},{"id":"short-19","cat":"short","b":0,"g":128,"d":128},{"id":"medium-00","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-01","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-02","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-03","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-04","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-05","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-06","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-07","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-08","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-09","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-10","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-11","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-12","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-14","cat":"medium","b":0,"g":128,"d":128},{"id":"long-00","cat":"long","b":0,"g":128,"d":128},{"id":"long-01","cat":"long","b":0,"g":128,"d":128},{"id":"long-02","cat":"long","b":0,"g":128,"d":128},{"id":"long-03","cat":"long","b":0,"g":128,"d":128},{"id":"long-04","cat":"long","b":0,"g":128,"d":128},{"id":"long-05","cat":"long","b":0,"g":128,"d":128},{"id":"long-06","cat":"long","b":0,"g":128,"d":128},{"id":"long-07","cat":"long","b":0,"g":128,"d":128},{"id":"long-08","cat":"long","b":0,"g":128,"d":128},{"id":"long-09","cat":"long","b":0,"g":128,"d":128},{"id":"long-10","cat":"long","b":0,"g":128,"d":128},{"id":"long-11","cat":"long","b":0,"g":128,"d":128},{"id":"long-12","cat":"long","b":0,"g":128,"d":128},{"id":"long-13","cat":"long","b":0,"g":128,"d":128},{"id":"long-14","cat":"long","b":0,"g":128,"d":128}]};
-const D = {"runs":{"r0_sdpa":{"file":"r0_baseline_mps_sdpa_20260916_114721.json","rung":"R0","device":"mps","dtype":"torch.float16","attn":"sdpa","decode_tok_s":36.288076640549725,"ttft_p50_ms":54.11824950033406,"ttft_p95_ms":72.99906670014025,"peak_rss_mb":1997.668352,"by_cat":{"long":34.95343910680475,"medium":37.54209804102743,"short":36.448293607685024},"kv_util":null},"r0_eager":{"file":"r0_baseline_mps_eager_20260916_115052.json","rung":"R0","device":"mps","dtype":"torch.float16","attn":"eager","decode_tok_s":26.772099063619855,"ttft_p50_ms":51.030916000399884,"ttft_p95_ms":78.05582285027411,"peak_rss_mb":2422.063104,"by_cat":{"long":23.734324538101642,"medium":28.864687288528998,"short":28.378000342968498},"kv_util":null},"r1_inferno":{"file":"r1_inferno_mps_20260916_115813.json","rung":"R1","device":"mps","dtype":"torch.float16","attn":"eager","decode_tok_s":29.208319795458742,"ttft_p50_ms":93.71810350057785,"ttft_p95_ms":358.8082517490875,"peak_rss_mb":1734.377472,"by_cat":{"long":26.962637816999155,"medium":30.017910826516264,"short":32.2387266201616},"kv_util":0.8579564714004415}},"kv":[{"id":"short-00","cat":"short","gen":8,"ptok":36,"kvu":26.2},{"id":"short-17","cat":"short","gen":13,"ptok":39,"kvu":30.5},{"id":"short-08","cat":"short","gen":14,"ptok":38,"kvu":30.7},{"id":"short-01","cat":"short","gen":23,"ptok":36,"kvu":35.4},{"id":"short-18","cat":"short","gen":33,"ptok":36,"kvu":41.5},{"id":"short-10","cat":"short","gen":35,"ptok":37,"kvu":43.0},{"id":"short-02","cat":"short","gen":36,"ptok":36,"kvu":43.3},{"id":"short-09","cat":"short","gen":46,"ptok":43,"kvu":51.5},{"id":"short-16","cat":"short","gen":52,"ptok":39,"kvu":53.9},{"id":"short-03","cat":"short","gen":62,"ptok":37,"kvu":59.4},{"id":"short-11","cat":"short","gen":68,"ptok":38,"kvu":63.3},{"id":"short-12","cat":"short","gen":70,"ptok":38,"kvu":64.5},{"id":"short-05","cat":"short","gen":103,"ptok":35,"kvu":84.0},{"id":"medium-13","cat":"medium","gen":105,"ptok":65,"kvu":87.6},{"id":"short-14","cat":"short","gen":109,"ptok":43,"kvu":88.3},{"id":"short-04","cat":"short","gen":128,"ptok":34,"kvu":99.4},{"id":"short-06","cat":"short","gen":128,"ptok":39,"kvu":99.4},{"id":"short-07","cat":"short","gen":128,"ptok":35,"kvu":99.4},{"id":"short-13","cat":"short","gen":128,"ptok":38,"kvu":99.4},{"id":"short-15","cat":"short","gen":128,"ptok":37,"kvu":99.4},{"id":"short-19","cat":"short","gen":128,"ptok":36,"kvu":99.4},{"id":"medium-00","cat":"medium","gen":128,"ptok":87,"kvu":99.5},{"id":"medium-01","cat":"medium","gen":128,"ptok":73,"kvu":99.5},{"id":"medium-02","cat":"medium","gen":128,"ptok":79,"kvu":99.5},{"id":"medium-03","cat":"medium","gen":128,"ptok":62,"kvu":99.5},{"id":"medium-04","cat":"medium","gen":128,"ptok":72,"kvu":99.5},{"id":"medium-05","cat":"medium","gen":128,"ptok":73,"kvu":99.5},{"id":"medium-06","cat":"medium","gen":128,"ptok":64,"kvu":99.5},{"id":"medium-07","cat":"medium","gen":128,"ptok":61,"kvu":99.5},{"id":"medium-08","cat":"medium","gen":128,"ptok":67,"kvu":99.5},{"id":"medium-09","cat":"medium","gen":128,"ptok":66,"kvu":99.5},{"id":"medium-10","cat":"medium","gen":128,"ptok":69,"kvu":99.5},{"id":"medium-11","cat":"medium","gen":128,"ptok":70,"kvu":99.5},{"id":"medium-12","cat":"medium","gen":128,"ptok":58,"kvu":99.5},{"id":"medium-14","cat":"medium","gen":128,"ptok":78,"kvu":99.5},{"id":"long-00","cat":"long","gen":128,"ptok":485,"kvu":99.8},{"id":"long-01","cat":"long","gen":128,"ptok":474,"kvu":99.8},{"id":"long-02","cat":"long","gen":128,"ptok":471,"kvu":99.8},{"id":"long-03","cat":"long","gen":128,"ptok":471,"kvu":99.8},{"id":"long-04","cat":"long","gen":128,"ptok":467,"kvu":99.8},{"id":"long-05","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-06","cat":"long","gen":128,"ptok":472,"kvu":99.8},{"id":"long-07","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-08","cat":"long","gen":128,"ptok":475,"kvu":99.8},{"id":"long-09","cat":"long","gen":128,"ptok":469,"kvu":99.8},{"id":"long-10","cat":"long","gen":128,"ptok":467,"kvu":99.8},{"id":"long-11","cat":"long","gen":128,"ptok":477,"kvu":99.8},{"id":"long-12","cat":"long","gen":128,"ptok":466,"kvu":99.8},{"id":"long-13","cat":"long","gen":128,"ptok":469,"kvu":99.8},{"id":"long-14","cat":"long","gen":128,"ptok":475,"kvu":99.8}]};
+const D = {"r0":{"sdpa":{"toks":36.288076640549725,"p50":54.11824950033406,"p95":72.99906670014025,"cat":{"long":34.95343910680475,"medium":37.54209804102743,"short":36.448293607685024}},"eager":{"toks":26.772099063619855,"p50":51.030916000399884,"p95":78.05582285027411,"cat":{"long":23.734324538101642,"medium":28.864687288528998,"short":28.378000342968498}}},"r1":{"toks":29.208319795458742,"p50":93.71810350057785,"p95":358.8082517490875,"kvu":0.8579564714004415,"cat":{"long":26.962637816999155,"medium":30.017910826516264,"short":32.2387266201616},"kv":[{"id":"short-00","cat":"short","kvu":26.2,"gen":8,"ptok":36},{"id":"short-17","cat":"short","kvu":30.5,"gen":13,"ptok":39},{"id":"short-08","cat":"short","kvu":30.7,"gen":14,"ptok":38},{"id":"short-01","cat":"short","kvu":35.4,"gen":23,"ptok":36},{"id":"short-18","cat":"short","kvu":41.5,"gen":33,"ptok":36},{"id":"short-10","cat":"short","kvu":43.0,"gen":35,"ptok":37},{"id":"short-02","cat":"short","kvu":43.3,"gen":36,"ptok":36},{"id":"short-09","cat":"short","kvu":51.5,"gen":46,"ptok":43},{"id":"short-16","cat":"short","kvu":53.9,"gen":52,"ptok":39},{"id":"short-03","cat":"short","kvu":59.4,"gen":62,"ptok":37},{"id":"short-11","cat":"short","kvu":63.3,"gen":68,"ptok":38},{"id":"short-12","cat":"short","kvu":64.5,"gen":70,"ptok":38},{"id":"short-05","cat":"short","kvu":84.0,"gen":103,"ptok":35},{"id":"medium-13","cat":"medium","kvu":87.6,"gen":105,"ptok":65},{"id":"short-14","cat":"short","kvu":88.3,"gen":109,"ptok":43},{"id":"short-04","cat":"short","kvu":99.4,"gen":128,"ptok":34},{"id":"short-06","cat":"short","kvu":99.4,"gen":128,"ptok":39},{"id":"short-07","cat":"short","kvu":99.4,"gen":128,"ptok":35},{"id":"short-13","cat":"short","kvu":99.4,"gen":128,"ptok":38},{"id":"short-15","cat":"short","kvu":99.4,"gen":128,"ptok":37},{"id":"short-19","cat":"short","kvu":99.4,"gen":128,"ptok":36},{"id":"medium-00","cat":"medium","kvu":99.5,"gen":128,"ptok":87},{"id":"medium-01","cat":"medium","kvu":99.5,"gen":128,"ptok":73},{"id":"medium-02","cat":"medium","kvu":99.5,"gen":128,"ptok":79},{"id":"medium-03","cat":"medium","kvu":99.5,"gen":128,"ptok":62},{"id":"medium-04","cat":"medium","kvu":99.5,"gen":128,"ptok":72},{"id":"medium-05","cat":"medium","kvu":99.5,"gen":128,"ptok":73},{"id":"medium-06","cat":"medium","kvu":99.5,"gen":128,"ptok":64},{"id":"medium-07","cat":"medium","kvu":99.5,"gen":128,"ptok":61},{"id":"medium-08","cat":"medium","kvu":99.5,"gen":128,"ptok":67},{"id":"medium-09","cat":"medium","kvu":99.5,"gen":128,"ptok":66},{"id":"medium-10","cat":"medium","kvu":99.5,"gen":128,"ptok":69},{"id":"medium-11","cat":"medium","kvu":99.5,"gen":128,"ptok":70},{"id":"medium-12","cat":"medium","kvu":99.5,"gen":128,"ptok":58},{"id":"medium-14","cat":"medium","kvu":99.5,"gen":128,"ptok":78},{"id":"long-00","cat":"long","kvu":99.8,"gen":128,"ptok":485},{"id":"long-01","cat":"long","kvu":99.8,"gen":128,"ptok":474},{"id":"long-02","cat":"long","kvu":99.8,"gen":128,"ptok":471},{"id":"long-03","cat":"long","kvu":99.8,"gen":128,"ptok":471},{"id":"long-04","cat":"long","kvu":99.8,"gen":128,"ptok":467},{"id":"long-05","cat":"long","kvu":99.8,"gen":128,"ptok":477},{"id":"long-06","cat":"long","kvu":99.8,"gen":128,"ptok":472},{"id":"long-07","cat":"long","kvu":99.8,"gen":128,"ptok":477},{"id":"long-08","cat":"long","kvu":99.8,"gen":128,"ptok":475},{"id":"long-09","cat":"long","kvu":99.8,"gen":128,"ptok":469},{"id":"long-10","cat":"long","kvu":99.8,"gen":128,"ptok":467},{"id":"long-11","cat":"long","kvu":99.8,"gen":128,"ptok":477},{"id":"long-12","cat":"long","kvu":99.8,"gen":128,"ptok":466},{"id":"long-13","cat":"long","kvu":99.8,"gen":128,"ptok":469},{"id":"long-14","cat":"long","kvu":99.8,"gen":128,"ptok":475}]},"r2":{"bs":[1,2,4,8,12,16,20],"toks":[28.3,30.16,30.6,30.53,37.06,97.06,68.36],"wasted":[0.0,6.5,10.8,17.9,18.0,17.8,17.9],"p95":[5.09,9.34,17.74,32.18,39.2,25.31,33.77],"blocked8":[{"id":"short-00","cat":"short","b":120,"g":8,"d":128},{"id":"short-17","cat":"short","b":115,"g":13,"d":128},{"id":"short-08","cat":"short","b":114,"g":14,"d":128},{"id":"short-01","cat":"short","b":105,"g":23,"d":128},{"id":"short-18","cat":"short","b":95,"g":33,"d":128},{"id":"short-10","cat":"short","b":93,"g":35,"d":128},{"id":"short-02","cat":"short","b":92,"g":36,"d":128},{"id":"short-09","cat":"short","b":82,"g":46,"d":128},{"id":"short-16","cat":"short","b":76,"g":52,"d":128},{"id":"short-03","cat":"short","b":66,"g":62,"d":128},{"id":"short-11","cat":"short","b":60,"g":68,"d":128},{"id":"short-12","cat":"short","b":58,"g":70,"d":128},{"id":"short-05","cat":"short","b":25,"g":103,"d":128},{"id":"medium-13","cat":"medium","b":23,"g":105,"d":128},{"id":"short-14","cat":"short","b":19,"g":109,"d":128},{"id":"short-04","cat":"short","b":0,"g":128,"d":128},{"id":"short-06","cat":"short","b":0,"g":128,"d":128},{"id":"short-07","cat":"short","b":0,"g":128,"d":128},{"id":"short-13","cat":"short","b":0,"g":128,"d":128},{"id":"short-15","cat":"short","b":0,"g":128,"d":128},{"id":"short-19","cat":"short","b":0,"g":128,"d":128},{"id":"medium-00","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-01","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-02","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-03","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-04","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-05","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-06","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-07","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-08","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-09","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-10","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-11","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-12","cat":"medium","b":0,"g":128,"d":128},{"id":"medium-14","cat":"medium","b":0,"g":128,"d":128},{"id":"long-00","cat":"long","b":0,"g":128,"d":128},{"id":"long-01","cat":"long","b":0,"g":128,"d":128},{"id":"long-02","cat":"long","b":0,"g":128,"d":128},{"id":"long-03","cat":"long","b":0,"g":128,"d":128},{"id":"long-04","cat":"long","b":0,"g":128,"d":128},{"id":"long-05","cat":"long","b":0,"g":128,"d":128},{"id":"long-06","cat":"long","b":0,"g":128,"d":128},{"id":"long-07","cat":"long","b":0,"g":128,"d":128},{"id":"long-08","cat":"long","b":0,"g":128,"d":128},{"id":"long-09","cat":"long","b":0,"g":128,"d":128},{"id":"long-10","cat":"long","b":0,"g":128,"d":128},{"id":"long-11","cat":"long","b":0,"g":128,"d":128},{"id":"long-12","cat":"long","b":0,"g":128,"d":128},{"id":"long-13","cat":"long","b":0,"g":128,"d":128},{"id":"long-14","cat":"long","b":0,"g":128,"d":128}]},"r3":{"rates":[0.2,0.3,0.4,0.8,1.6,2.0,2.4,3.2],"cont_p95":[0.16,0.095,0.137,0.1,0.433,3.767,2.951,3.74],"stat_p95":[0.041,0.162,0.501,1.258,3.598,5.514,5.13,6.314],"cont_tok":[6.53,9.69,14.35,27.12,38.76,38.54,40.76,43.15],"stat_tok":[6.53,9.69,14.26,26.43,35.79,37.63,38.61,41.1],"cont_ok":[true,true,true,true,true,false,false,false],"stat_ok":[true,true,false,false,false,false,false,false],"burst":{"cont_tok":44.6,"stat_tok":37.77,"cont_p50":0.279,"stat_p50":2.923}},"r4":{"cap":{"r3":{"design":"R3 contiguous","concurrent_capacity":7,"peak_concurrent":7,"throughput_tok_s":39.19285090912113,"wall_clock_s":51.13177412500045,"kv_bytes":45158400,"preemptions":0,"utilisation":0.15765306122448983},"r4":{"design":"R4 paged bs=16","n_blocks":244,"concurrent_capacity":null,"peak_concurrent":56,"throughput_tok_s":110.652048162564,"wall_clock_s":18.110826083000575,"kv_bytes":47972352,"block_utilisation":0.8603582368983279,"preemptions":8,"blocks_leaked":0}},"sweep":[{"bs":4,"util":0.9566449466596849,"toks":115.25782577028231},{"bs":16,"util":0.8279156024153975,"toks":146.36851164764786},{"bs":64,"util":0.6533158400708481,"toks":138.74193023454174}]},"r5":{"off":{"prefix_cache":false,"hit_rate":0.0,"prefill_tokens_computed":7092,"prefill_tokens_total":7092,"prefill_saved_frac":0.0,"cold_prefill_ms":1730.7803278667657,"hit_prefill_ms":null,"n_cold":15,"n_hit":0,"wall_clock_s":56.74955591700018,"throughput_tok_s":6.343661975549603,"preemptions":0},"on":{"prefix_cache":true,"hit_rate":0.8381374722838137,"prefill_tokens_computed":1044,"prefill_tokens_total":7092,"prefill_saved_frac":0.8527918781725888,"cold_prefill_ms":1392.3602499999106,"hit_prefill_ms":354.20535992865814,"n_cold":1,"n_hit":14,"wall_clock_s":18.993043165999552,"throughput_tok_s":18.95430852515804,"preemptions":0}}};
 const tip = document.getElementById('tip');
 function bindTip(el, text){
-  el.addEventListener('mouseenter', e => { tip.textContent = text; tip.style.opacity = 1; });
+  el.addEventListener('mouseenter', () => { tip.textContent = text; tip.style.opacity = 1; });
   el.addEventListener('mousemove', e => {
     tip.style.left = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 10) + 'px';
     tip.style.top = (e.clientY - tip.offsetHeight - 10) + 'px';
   });
   el.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
 }
-
-const RUNS = [
-  {k:'r0_sdpa',   label:'HF sdpa',   sub:'R0 default',   c:'var(--s1)'},
-  {k:'r0_eager',  label:'HF eager',  sub:'R0 same path', c:'var(--s3)'},
-  {k:'r1_inferno',label:'Inferno',   sub:'R1',           c:'var(--s2)'},
-];
-
-/* ---- rung ladder ---- */
 const RUNGS = [
   {id:'R0', nm:'Baseline', sub:'HuggingFace generate(), greedy, batch size 1',
-   st:'done', mt:'36.29 tok/s &middot; TTFT p50 54.1 ms'},
-  {id:'R1', nm:'Own attention + KV cache',
-   sub:'Hand-written forward pass, 24 decoder blocks, preallocated cache',
-   st:'done', mt:'29.21 tok/s &middot; parity 50/50'},
-  {id:'R2', nm:'Static batching',
-   sub:'Left-padding, one batched cache tensor, padding-aware mask',
-   st:'done', mt:'97.06 tok/s @ bs16 &middot; 17.9% of steps wasted'},
-  {id:'R3', nm:'Continuous batching', sub:'Iteration-level scheduling, waiting/running/finished',
-   st:'idle', mt:'no data yet'},
-  {id:'R4', nm:'Paged KV cache', sub:'Block manager with reference counting, block-aware gather',
-   st:'idle', mt:'no data yet'},
-  {id:'R5', nm:'Prefix caching', sub:'Per-block prefix hashing, copy-on-write on divergence',
-   st:'idle', mt:'no data yet'},
+   mt:'36.29 tok/s &middot; TTFT p50 54.1 ms'},
+  {id:'R1', nm:'Own attention + KV cache', sub:'Hand-written forward pass, 24 decoder blocks',
+   mt:'29.21 tok/s &middot; parity 50/50'},
+  {id:'R2', nm:'Static batching', sub:'Left-padding, padding-aware mask, one batched cache',
+   mt:'17.9% of decode steps wasted'},
+  {id:'R3', nm:'Continuous batching', sub:'Iteration-level scheduling, slot-based cache',
+   mt:'5.3&times; arrival rate at a TTFT budget'},
+  {id:'R4', nm:'Paged KV cache', sub:'Block allocator, refcounting, preemption with recompute',
+   mt:'8&times; concurrent sequences, same memory'},
+  {id:'R5', nm:'Prefix caching', sub:'Prefix-keyed blocks, LRU cached tier, copy-on-write',
+   mt:'4.89&times; TTFT on a cache hit'},
 ];
 document.getElementById('ladder').innerHTML = RUNGS.map(r => `
-  <div class="rung ${r.st==='idle'?'pending':''}">
-    <div class="id">${r.id}</div>
-    <div><span class="nm">${r.nm}<span class="pill p-${r.st}">${
-      r.st==='done'?'accepted':r.st==='active'?'in progress':'not started'}</span></span>
+  <div class="rung done"><div class="id">${r.id}</div>
+    <div><span class="nm">${r.nm}<span class="pill p-done">accepted</span></span>
       <span class="sub">${r.sub}</span></div>
-    <div class="mt">${r.mt}</div>
-  </div>`).join('');
+    <div class="mt">${r.mt}</div></div>`).join('');
 
-/* ---- horizontal bar charts ---- */
 function hbars(el, rows, max, fmt, axisMax){
   el.innerHTML = '<div class="bars">' + rows.map(r => `
     <div class="barrow"><div class="lb">${r.label}</div>
       <div class="track"><div class="bar" data-t="${r.tip}"
         style="width:${Math.max(r.v/max*100, 2)}%;background:${r.c}">
-        ${r.v/max > 0.22 ? `<span class="val">${fmt(r.v)}</span>`
+        ${r.v/max > 0.28 ? `<span class="val">${fmt(r.v)}</span>`
                          : `<span class="valout">${fmt(r.v)}</span>`}</div></div></div>`).join('')
     + '</div><div class="axis"><span>0</span><span>' + axisMax + '</span></div>';
   el.querySelectorAll('.bar').forEach(b => bindTip(b, b.dataset.t));
 }
+function cols(el, items, maxV, axisLeft, axisRight, h){
+  el.innerHTML = `<div class="cols" style="height:${h||150}px">` + items.map(x =>
+    `<div class="col" style="height:${Math.max(x.v/maxV*100,1.5)}%;background:${x.c}"
+      data-t="${x.tip}"></div>`).join('') +
+    `</div><div class="axis"><span>${axisLeft}</span><span>${axisRight}</span></div>`;
+  el.querySelectorAll('.col').forEach(c => bindTip(c, c.dataset.t));
+}
 
+/* R1 */
+const R = [['HF sdpa\nR0 default','r0sdpa','var(--s1)'],['HF eager\nR0 same path','r0eager','var(--s3)'],
+           ['Inferno\nR1','r1','var(--s2)']];
+const tk = {r0sdpa:D.r0.sdpa.toks, r0eager:D.r0.eager.toks, r1:D.r1.toks};
+const p50 = {r0sdpa:D.r0.sdpa.p50, r0eager:D.r0.eager.p50, r1:D.r1.p50};
+const p95 = {r0sdpa:D.r0.sdpa.p95, r0eager:D.r0.eager.p95, r1:D.r1.p95};
 hbars(document.getElementById('c1'),
-  RUNS.map(r => ({label: r.label + '\n' + r.sub, v: D.runs[r.k].decode_tok_s, c: r.c,
-                  tip: r.label + '  ' + D.runs[r.k].decode_tok_s.toFixed(2) + ' tok/s'})),
-  40, v => v.toFixed(2) + ' tok/s', '40 tok/s');
+  R.map(([l,k,c]) => ({label:l, v:tk[k], c, tip:`${l.split('\n')[0]}  ${tk[k].toFixed(2)} tok/s`})),
+  40, v => v.toFixed(2)+' tok/s', '40 tok/s');
+const t2=[];
+R.forEach(([l,k,c]) => { t2.push({label:l.split('\n')[0]+'\np50', v:p50[k], c,
+    tip:`${l.split('\n')[0]} TTFT p50  ${p50[k].toFixed(1)} ms`});
+  t2.push({label:'p95', v:p95[k], c, tip:`${l.split('\n')[0]} TTFT p95  ${p95[k].toFixed(1)} ms`}); });
+hbars(document.getElementById('c2'), t2, 380, v => v.toFixed(1)+' ms', '380 ms');
 
-const t2 = [];
-RUNS.forEach(r => {
-  t2.push({label: r.label + '\np50', v: D.runs[r.k].ttft_p50_ms, c: r.c,
-           tip: r.label + ' TTFT p50  ' + D.runs[r.k].ttft_p50_ms.toFixed(1) + ' ms'});
-  t2.push({label: 'p95', v: D.runs[r.k].ttft_p95_ms, c: r.c,
-           tip: r.label + ' TTFT p95  ' + D.runs[r.k].ttft_p95_ms.toFixed(1) + ' ms'});
+/* R2 */
+const CC={short:'var(--s1)',medium:'var(--s3)',long:'var(--s2)'};
+const bmax=Math.max(...D.r2.blocked8.map(x=>x.b));
+cols(document.getElementById('c6'), D.r2.blocked8.map(x=>({v:Math.max(x.b,0.4), c:CC[x.cat],
+  tip:`${x.id}\nblocked ${x.b} steps\ngenerated ${x.g}, delivered after ${x.d}`})),
+  bmax, `worst: ${bmax} steps blocked`,
+  `${D.r2.blocked8.filter(x=>x.b===0).length} of 50 not blocked`);
+const tmax=Math.max(...D.r2.toks);
+const c5=document.getElementById('c5');
+c5.innerHTML='<div class="cols" style="height:170px;gap:10px">'+D.r2.bs.map((b,i)=>
+  `<div class="col" style="height:${D.r2.toks[i]/tmax*100}%;background:${
+    D.r2.toks[i]===tmax?'var(--s2)':'var(--s1)'}"
+    data-t="batch size ${b}\n${D.r2.toks[i]} tok/s\nTTFT p95 ${D.r2.p95[i]}s\n${
+    D.r2.wasted[i]}% of steps wasted"></div>`).join('')+
+  '</div><div class="axis" style="gap:10px">'+D.r2.bs.map((b,i)=>
+   `<span style="flex:1;text-align:center">bs ${b}<br><b style="color:var(--ink-2)">${D.r2.toks[i]}</b></span>`
+  ).join('')+'</div>';
+c5.querySelectorAll('.col').forEach(c=>bindTip(c,c.dataset.t));
+
+/* R3 */
+const r3rows=[];
+D.r3.rates.forEach((rate,i)=>{
+  r3rows.push({label:`${rate} req/s\ncontinuous`, v:D.r3.cont_p95[i], c:'var(--s2)',
+    tip:`continuous @ ${rate} req/s\nTTFT p95 ${D.r3.cont_p95[i]}s  ${D.r3.cont_ok[i]?'within budget':'OVER BUDGET'}\n${D.r3.cont_tok[i]} tok/s`});
+  r3rows.push({label:'static', v:D.r3.stat_p95[i], c:'var(--s1)',
+    tip:`static @ ${rate} req/s\nTTFT p95 ${D.r3.stat_p95[i]}s  ${D.r3.stat_ok[i]?'within budget':'OVER BUDGET'}\n${D.r3.stat_tok[i]} tok/s`});
 });
-hbars(document.getElementById('c2'), t2, 380, v => v.toFixed(1) + ' ms', '380 ms');
+hbars(document.getElementById('c7'), r3rows, 6.5, v=>v.toFixed(2)+'s', '6.5 s  (budget 0.5 s)');
 
-const cats = ['short','medium','long'];
-const t3 = [];
-cats.forEach(c => RUNS.forEach((r,i) => t3.push({
-  label: i === 0 ? c + '\n' + r.label : r.label,
-  v: D.runs[r.k].by_cat[c], c: r.c,
-  tip: c + ' &middot; ' + r.label + '  ' + D.runs[r.k].by_cat[c].toFixed(2) + ' tok/s'
-})));
-hbars(document.getElementById('c3'), t3, 40, v => v.toFixed(2), '40 tok/s');
+/* R4 */
+const cap=D.r4.cap;
+hbars(document.getElementById('c8'), [
+  {label:'R3 contiguous', v:cap.r3.peak_concurrent, c:'var(--s1)',
+   tip:`R3 contiguous\n${cap.r3.peak_concurrent} concurrent\n${cap.r3.throughput_tok_s.toFixed(2)} tok/s\nutilisation ${(cap.r3.utilisation*100).toFixed(1)}%`},
+  {label:'R4 paged bs=16', v:cap.r4.peak_concurrent, c:'var(--s2)',
+   tip:`R4 paged\n${cap.r4.peak_concurrent} concurrent\n${cap.r4.throughput_tok_s.toFixed(2)} tok/s\nblock utilisation ${(cap.r4.block_utilisation*100).toFixed(1)}%`},
+], 60, v=>v+' seq', '60 sequences');
+const sw=D.r4.sweep;
+// Throughput only. Utilisation is a fraction and throughput is tok/s - putting
+// them on one scale would be a dual-axis chart, which is never readable. The
+// utilisation figures sit beside it as numbers instead.
+hbars(document.getElementById('c9'), sw.map(x=>({
+  label:`block ${x.bs}`, v:x.toks, c:x.bs===16?'var(--s2)':'var(--s1)',
+  tip:`block size ${x.bs}\n${x.toks.toFixed(2)} tok/s\nblock utilisation ${(x.util*100).toFixed(1)}%`
+})), 160, v=>v.toFixed(1)+' tok/s', '160 tok/s');
+document.getElementById('c9').insertAdjacentHTML('beforeend',
+  '<div class="kpi">' + sw.map(x=>
+    `<div>BLOCK ${x.bs} &middot; UTILISATION<b>${(x.util*100).toFixed(1)}%</b></div>`
+  ).join('') + '</div>');
 
-/* ---- R2: blocking + batch sweep ---- */
-const CC2={short:'var(--s1)',medium:'var(--s3)',long:'var(--s2)'};
-const bmax=Math.max(...R2.blocked8.map(x=>x.b));
-document.getElementById('c6').innerHTML='<div class="cols">'+R2.blocked8.map(x=>
-  `<div class="col" style="height:${Math.max(x.b/bmax*100,1.5)}%;background:${CC2[x.cat]}"
-   data-t="${x.id}\nblocked ${x.b} steps\ngenerated ${x.g}, delivered after ${x.d}"></div>`
- ).join('')+'</div><div class="axis"><span>worst: '+bmax+' steps blocked</span><span>'+
- R2.blocked8.filter(x=>x.b===0).length+' of 50 not blocked</span></div>';
-document.querySelectorAll('#c6 .col').forEach(c=>bindTip(c,c.dataset.t));
-
-const tmax=Math.max(...R2.toks);
-document.getElementById('c5').innerHTML='<div class="cols" style="height:170px;gap:10px">'+
- R2.bs.map((b,i)=>`<div class="col" style="height:${R2.toks[i]/tmax*100}%;background:${
-   R2.toks[i]===tmax?'var(--s2)':'var(--s1)'}"
-   data-t="batch size ${b}\n${R2.toks[i]} tok/s\nlatency p95 ${R2.p95[i]}s\n${
-   R2.wasted[i]}% of steps wasted"></div>`).join('')+
- '</div><div class="axis" style="gap:10px">'+R2.bs.map((b,i)=>
-   `<span style="flex:1;text-align:center">bs ${b}<br><b style="color:var(--ink-2)">${
-    R2.toks[i]}</b></span>`).join('')+'</div>';
-document.querySelectorAll('#c5 .col').forEach(c=>bindTip(c,c.dataset.t));
-
-/* ---- KV utilisation columns ---- */
-const CC = {short:'var(--s1)', medium:'var(--s3)', long:'var(--s2)'};
-document.getElementById('c4').innerHTML = '<div class="cols">' + D.kv.map(x =>
-  `<div class="col" style="height:${x.kvu}%;background:${CC[x.cat]}"
-    data-t="${x.id}\n${x.kvu}% utilised\n${x.gen} of 128 tokens generated\nprompt ${x.ptok} tok"></div>`
-  ).join('') + '</div><div class="axis"><span>worst: ' + D.kv[0].kvu + '% (' + D.kv[0].id +
-  ')</span><span>best: ' + D.kv[D.kv.length-1].kvu + '%</span></div>';
-document.querySelectorAll('#c4 .col').forEach(c => bindTip(c, c.dataset.t.replace(/\\n/g,'\n')));
+/* R5 */
+const off=D.r5.off, on=D.r5.on;
+hbars(document.getElementById('c10'), [
+  {label:'cache off\nprefill tokens', v:off.prefill_tokens_computed, c:'var(--s1)',
+   tip:`cache off\n${off.prefill_tokens_computed} of ${off.prefill_tokens_total} prefill tokens computed\nwall ${off.wall_clock_s.toFixed(1)}s`},
+  {label:'cache on', v:on.prefill_tokens_computed, c:'var(--s2)',
+   tip:`cache on\n${on.prefill_tokens_computed} of ${on.prefill_tokens_total} prefill tokens computed\nhit rate ${(on.hit_rate*100).toFixed(1)}%\nwall ${on.wall_clock_s.toFixed(1)}s`},
+], off.prefill_tokens_total, v=>v.toFixed(0)+' tok', off.prefill_tokens_total+' tokens');
 </script>
