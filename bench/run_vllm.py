@@ -40,9 +40,12 @@ def main() -> None:
     spec = json.loads((ROOT / "bench" / "prompts.json").read_text())
     prompts = spec["prompts"][: args.limit]
 
+    # disable_log_stats defaults to True in the offline LLM class, and that
+    # suppresses per-request metrics entirely - the first run reported nan for
+    # every latency figure.
     llm = LLM(model=args.model, dtype="float16",
               gpu_memory_utilization=args.gpu_memory_utilization,
-              enforce_eager=False)
+              enforce_eager=False, disable_log_stats=False)
     tok = llm.get_tokenizer()
 
     # Same chat template as every other rung (docs/decisions.md).
@@ -58,9 +61,30 @@ def main() -> None:
     for _ in range(2):                            # warm up (B2)
         llm.generate(texts[:2], sp, use_tqdm=False)
 
+    # (a) BATCHED: everything at once. This is vLLM operating the way it is
+    #     meant to, and the number to compare against Inferno's R2/R4 throughput.
     t0 = time.perf_counter()
     outs = llm.generate(texts, sp, use_tqdm=False)
     wall = time.perf_counter() - t0
+
+    # (b) SEQUENTIAL: one prompt at a time, which is how R0 and R1 were measured.
+    #     TTFT comes from a max_tokens=1 run and decode from the difference, so
+    #     the definitions match bench/run_baseline.py exactly instead of relying
+    #     on vLLM's internal metrics being populated.
+    sp1 = SamplingParams(temperature=0.0, top_p=1.0, top_k=-1,
+                         repetition_penalty=1.0, max_tokens=1)
+    seq_ttft, seq_decode_tok_s = [], []
+    for text in texts:
+        t = time.perf_counter()
+        llm.generate([text], sp1, use_tqdm=False)
+        ttft1 = time.perf_counter() - t
+        t = time.perf_counter()
+        o = llm.generate([text], sp, use_tqdm=False)[0]
+        full = time.perf_counter() - t
+        n = len(o.outputs[0].token_ids)
+        seq_ttft.append(ttft1)
+        if n > 1 and full > ttft1:
+            seq_decode_tok_s.append((n - 1) / (full - ttft1))
 
     records, ttfts = [], []
     for p, o in zip(prompts, outs):
@@ -84,6 +108,9 @@ def main() -> None:
     gen = sum(r["n_generated"] - 1 for r in records)
     dec = sum(r["decode_s"] for r in records if r["decode_s"])
     summary = {
+        "sequential_decode_tok_s": st.mean(seq_decode_tok_s) if seq_decode_tok_s else None,
+        "sequential_ttft_p50_ms": percentile(seq_ttft, .50) * 1000,
+        "sequential_ttft_p95_ms": percentile(seq_ttft, .95) * 1000,
         "decode_tok_s_aggregate": gen / dec if dec else None,
         "throughput_tok_s_wall": sum(r["n_generated"] for r in records) / wall,
         "ttft_p50_ms": percentile(ttfts, .50) * 1000 if ttfts else None,
@@ -126,10 +153,14 @@ def main() -> None:
     out.write_text(json.dumps(payload, indent=2))
 
     print(f"\n{'='*62}\nvLLM  [{payload['environment']['cuda_device']}]\n{'='*62}")
-    print(f"  decode throughput   {summary['decode_tok_s_aggregate'] or float('nan'):8.2f} tok/s")
-    print(f"  wall throughput     {summary['throughput_tok_s_wall']:8.2f} tok/s")
-    print(f"  TTFT p50            {summary['ttft_p50_ms'] or float('nan'):8.1f} ms")
-    print(f"  TTFT p95            {summary['ttft_p95_ms'] or float('nan'):8.1f} ms")
+    print(f"  BATCHED (all 50 at once, vLLM as intended)")
+    print(f"    wall throughput   {summary['throughput_tok_s_wall']:8.2f} tok/s")
+    print(f"  SEQUENTIAL (one at a time - comparable to R0/R1)")
+    print(f"    decode            {summary['sequential_decode_tok_s'] or float('nan'):8.2f} tok/s")
+    print(f"    TTFT p50          {summary['sequential_ttft_p50_ms']:8.1f} ms")
+    print(f"    TTFT p95          {summary['sequential_ttft_p95_ms']:8.1f} ms")
+    if summary["decode_tok_s_aggregate"]:
+        print(f"  (vllm internal metrics: {summary['decode_tok_s_aggregate']:.2f} tok/s decode)")
     if "token_agreement" in summary:
         a = summary["token_agreement"]
         print(f"  token agreement     {a['identical']}/{a['of']} identical to Inferno")
