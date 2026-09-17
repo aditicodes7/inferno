@@ -7,7 +7,7 @@ Phases map to the rung plan in `CLAUDE.md`: R0 baseline, R1 own attention + KV
 cache, R2 static batching, R3 continuous batching, R4 paged KV cache,
 R5 prefix caching.
 
-**Status: ALL SIX RUNGS COMPLETE AND ACCEPTED (R0–R5). Remaining: GPU runs on rented hardware, the vLLM comparison, and the gap analysis.**
+**Status: COMPLETE. All six rungs built, measured on Apple Silicon AND on a Tesla T4, compared against vLLM 0.29, gap analysed in [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md).**
 
 ---
 
@@ -1071,6 +1071,52 @@ the MLP and the attention *math* — but the **gather is unchanged**: every laye
 still materialises the whole block table regardless of how much of it was cached.
 Same structural ceiling as Q9, now visible from a second direction.
 
+### GPU — Tesla T4, 2026-09-17 — **THE RUN THAT OVERTURNED FOUR CONCLUSIONS**
+**Hardware: Tesla T4 (cc 7.5), Kaggle, float16.** Raw: `results/gpu/SUMMARY.json`.
+Full analysis: [docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md).
+
+**All 68 tests passed on CUDA**, hardware the engine was never developed on.
+
+| | HuggingFace sdpa | **Inferno** | vLLM 0.29 |
+|---|---|---|---|
+| single-stream decode | 31.76 tok/s | **38.88** (+22.4%) | 174.52 (**4.49×**) |
+| batched, 50 prompts | — | **643.82** (bs=32) | 2547.38 (**3.96×**) |
+| TTFT p50 | 36.6 ms | **29.1 ms** | 20.7 ms |
+
+*Controlled:* vLLM's install downgraded torch 2.10.0+cu128 → 2.13.0+cu130, so
+R0/R1/R2 were re-measured under 2.13. Not cosmetic — Inferno fell 42.09 → 38.88
+tok/s (−7.6%) on the torch change alone. The pre-install numbers would have
+overstated Inferno by that margin.
+
+**Four MPS conclusions died:**
+
+| Concluded on MPS | On CUDA |
+|---|---|
+| Throughput peaks at batch 16, falls back at 20 (B5), reproducible 3× | **Dead.** Monotonic 1→32: 38.9 → 214 → 644 tok/s. MPS kernel artifact. |
+| "The textbook batching argument does not hold here" (~8% from bs 1→8) | **Dead.** 5.5× from 1→8, 16.6× at 32. The argument holds. |
+| Block size 16 clearly best (146 vs 115/139) | **Dead.** Flat across 4/16/64 on CUDA, and 16 is the *slowest*. |
+| Prefix caching cuts TTFT 4.89× | **Overstated.** 1.44× on GPU — prefill costs a T4 only ~42 ms, so there is little to save. |
+
+**What survived:** head-of-line blocking at **17.9% of decode steps on both
+platforms** (a property of the policy, not the hardware); continuous batching's
+advantage, which *grew* from 5.3× to **16×** (static sustains 0.25 req/s under a
+500 ms p95 budget, continuous 4.0); paging's concurrency advantage, 8× → **9.1×**
+(7 → 64 sequences at 48 MB, utilisation 17.3% → 97.2%, zero blocks leaked across
+24–35 preemptions); and the prefix cache hit rate, **83.8% on both**.
+
+**And the project's central hypothesis was wrong.** Throughout, the gather was
+logged as the largest expected line item in the gap (Q9). R1 — the plain
+contiguous engine, **no block table, no gather** — is already 4.49× behind vLLM.
+The gap is fully present before paging exists, so paging cannot cause it. At
+equal concurrency the paged engine was 2% *faster* than the contiguous one. The
+real gap is the execution layer: CUDA graph capture, `torch.compile`, and a fused
+attention kernel — things **neither Inferno nor HuggingFace does**, which is why
+those two sit within 22% of each other and vLLM is 4.5× above both.
+
+**Inferno's prefix cache is as effective as vLLM's:** +20.1% throughput against
+vLLM's +19.3%, hit rate 83.8% against 86.1%, same workload. The ideas transfer.
+The execution layer does not.
+
 ---
 
 ## 5. Open Questions
@@ -1178,7 +1224,15 @@ iterations and mixing it into the decode batch — is what production engines do
 instead. It interacts directly with R4's block allocator, so it is worth
 revisiting there rather than retrofitting now.
 
-### Q9 — What does the gather actually cost against a fused kernel? **[OPEN, blocks the gap analysis]**
+### Q9 — What does the gather cost against a fused kernel? **[RESOLVED 2026-09-17 — and the answer was "not much"]**
+**The hypothesis was wrong.** R1 has no block table and no gather, and is already
+4.49× behind vLLM; at equal concurrency the paged engine was 2% *faster* than the
+contiguous one. The gather is not the dominant cost. See §3 of
+[docs/GAP_ANALYSIS.md](docs/GAP_ANALYSIS.md) — the gap is CUDA graph capture,
+compilation and fused kernels, none of which Inferno or HuggingFace does.
+
+*Original framing, kept because it was stated confidently and repeatedly, and was
+wrong:*
 The equal-concurrency comparison above measures R4's gather against R3's gather,
 because both materialise. It says nothing about the thing that matters for the
 vLLM comparison: a fused paged-attention kernel that walks the block table inside

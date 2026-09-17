@@ -1,0 +1,180 @@
+{
+ "hardware": "Tesla T4 (compute capability 7.5), Kaggle, float16, Qwen2.5-0.5B-Instruct",
+ "note": "torch 2.10.0+cu128 for the first pass; vLLM downgraded it to 2.13.0+cu130, so R0-sdpa/R1/R2 were re-run under 2.13 for a controlled comparison. Use the torch-2.13 figures when comparing against vLLM.",
+ "torch_2_10": {
+  "r0_eager": {
+   "decode_tok_s": 34.901,
+   "ttft_p50_ms": 31.0,
+   "ttft_p95_ms": 35.764
+  },
+  "r0_sdpa": {
+   "decode_tok_s": 33.498,
+   "ttft_p50_ms": 33.668,
+   "ttft_p95_ms": 35.606
+  },
+  "r1": {
+   "decode_tok_s": 42.094,
+   "ttft_p50_ms": 26.482,
+   "ttft_p95_ms": 34.388
+  },
+  "r2": {
+   "1": 40.891,
+   "2": 78.082,
+   "4": 139.971,
+   "8": 235.719,
+   "12": 315.442,
+   "16": 395.604,
+   "20": 484.767,
+   "32": 723.934
+  },
+  "r2_wasted_step_fraction": {
+   "1": 0.0,
+   "2": 0.068,
+   "4": 0.111,
+   "8": 0.181,
+   "12": 0.18,
+   "16": 0.175,
+   "20": 0.181,
+   "32": 0.179
+  }
+ },
+ "torch_2_13": {
+  "r0_sdpa": {
+   "decode_tok_s": 31.761,
+   "ttft_p50_ms": 36.569,
+   "ttft_p95_ms": 39.002
+  },
+  "r1": {
+   "decode_tok_s": 38.883,
+   "ttft_p50_ms": 29.115,
+   "ttft_p95_ms": 38.28
+  },
+  "r2": {
+   "1": 38.868,
+   "8": 214.079,
+   "32": 643.824
+  }
+ },
+ "r3_poisson": {
+  "0.25": {
+   "cont_p95": 0.032,
+   "cont_ok": true,
+   "stat_p95": 0.043,
+   "stat_ok": true
+  },
+  "0.5": {
+   "cont_p95": 0.049,
+   "cont_ok": true,
+   "stat_p95": 0.802,
+   "stat_ok": false
+  },
+  "1.0": {
+   "cont_p95": 0.046,
+   "cont_ok": true,
+   "stat_p95": 1.043,
+   "stat_ok": false
+  },
+  "2.0": {
+   "cont_p95": 0.052,
+   "cont_ok": true,
+   "stat_p95": 1.018,
+   "stat_ok": false
+  },
+  "4.0": {
+   "cont_p95": 0.054,
+   "cont_ok": true,
+   "stat_p95": 0.91,
+   "stat_ok": false
+  },
+  "8.0": {
+   "cont_p95": 0.506,
+   "cont_ok": false,
+   "stat_p95": 1.003,
+   "stat_ok": false
+  },
+  "16.0": {
+   "cont_p95": 2.048,
+   "cont_ok": false,
+   "stat_p95": 2.13,
+   "stat_ok": false
+  }
+ },
+ "r3_burst": {
+  "cont_tok_s": 143.482,
+  "stat_tok_s": 131.951,
+  "cont_ttft_p50": 0.16,
+  "stat_ttft_p50": 1.184
+ },
+ "r4_48mb": {
+  "contiguous": {
+   "concurrent": 7,
+   "tok_s": 216.066,
+   "utilisation": 0.173,
+   "preempt": 0
+  },
+  "paged_bs4": {
+   "concurrent": 64,
+   "tok_s": 502.255,
+   "block_util": 0.972,
+   "preempt": 24
+  },
+  "paged_bs16": {
+   "concurrent": 64,
+   "tok_s": 478.151,
+   "block_util": 0.87,
+   "preempt": 35
+  },
+  "paged_bs64": {
+   "concurrent": 50,
+   "tok_s": 512.666,
+   "block_util": 0.668,
+   "preempt": 22
+  }
+ },
+ "r4_512mb": {
+  "contiguous": {
+   "concurrent": 64,
+   "capacity": 78,
+   "tok_s": 836.796,
+   "utilisation": 0.173
+  },
+  "paged_bs16": {
+   "concurrent": 64,
+   "tok_s": 854.406,
+   "block_util": 0.845
+  }
+ },
+ "r5": {
+  "off": {
+   "hit_rate": 0.0,
+   "prefill_computed": 7092,
+   "cold_ms": 41.742,
+   "wall_s": 1.274,
+   "tok_s": 282.543
+  },
+  "on": {
+   "hit_rate": 0.838,
+   "prefill_computed": 1044,
+   "cold_ms": 35.362,
+   "hit_ms": 29.028,
+   "wall_s": 1.061,
+   "tok_s": 339.257
+  }
+ },
+ "vllm": {
+  "prefix_cache_on": {
+   "batched_tok_s": 3038.837,
+   "seq_decode_tok_s": 167.363,
+   "seq_ttft_p50_ms": 19.628,
+   "token_agreement": "37/50"
+  },
+  "prefix_cache_off": {
+   "batched_tok_s": 2547.38,
+   "seq_decode_tok_s": 174.519,
+   "seq_ttft_p50_ms": 20.709,
+   "token_agreement": "42/50"
+  },
+  "internal_batched_per_request_decode_tok_s": 67.395,
+  "caveat": "vLLM's own ttft_p50_ms fields are invalid - arrival_time is wall-clock and first_token_ts is monotonic, so the difference came out NEGATIVE (-1.79e12 ms). The sequential figures above are measured independently."
+ }
+}

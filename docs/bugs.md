@@ -356,3 +356,23 @@ sized from max_new_tokens when the prompts stop at EOS long before). What caught
 it was that the number was IMPOSSIBLE rather than merely wrong. Had it printed
 84% it would have gone straight into the log unchallenged. Prefer metrics that
 can be visibly out of range over metrics that degrade quietly.
+
+---
+
+## 2026-09-17 — vLLM's own TTFT metric came out negative
+
+Symptom:      `ttft_p50_ms: -1789632006602.94` in the vLLM results file.
+Expected:     a positive number of milliseconds.
+Actual cause: `RequestStateStats.arrival_time` is a wall-clock timestamp;
+              `first_token_ts` is a monotonic-clock timestamp. Subtracting one
+              from the other is meaningless - the result is the offset between
+              two unrelated epochs.
+Fix:          none needed. run_vllm.py measures TTFT independently in its
+              sequential pass, and those figures (20.7 ms p50) are the ones
+              used. The invalid fields are recorded with a caveat rather than
+              deleted.
+Why it matters: third time this session a wrong number was caught by being
+              IMPOSSIBLE rather than merely surprising - see also 126%
+              utilisation, and a 2x disagreement between two measurements of
+              the same quantity. A plausible-looking wrong number is the
+              dangerous kind. Prefer metrics that can be visibly out of range.
