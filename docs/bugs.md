@@ -271,3 +271,88 @@ Actual cause: CONFIRMED IN PART - float16 range, triggered by fully-masked
 Fix:          NOT APPLIED - (a) awaits a decision; (b) is a property.
 Why it worked: n/a
 
+
+---
+
+## 2026-09-16 — R4 preemption livelock: two requests evict each other forever
+
+Symptom:      `pytest tests/test_paged_parity.py` produced no output and did
+              not terminate. No error, no crash, no progress. Killed at 600s.
+Expected:     the memory-pressure test to preempt a few times and finish.
+Hypotheses:   1) livelock in the admission/preemption loop  2) the gather is
+              simply far more expensive than expected in fp32  3) a hang inside
+              the model forward.
+Test that distinguishes them:
+              replay the ADMISSION POLICY alone - BlockManager + Scheduler, no
+              model, no tensors. If it cycles, it is (1) and nothing to do with
+              the engine. Took under a second.
+Actual cause: CONFIRMED (1). With an 8-block pool and block_size 16:
+
+                short-00 needs 3 blocks, medium-00 needs 6.
+
+                iter 0  admit short-00               free=5
+                iter 1  admit medium-00, evict short-00   free=2
+                iter 2  admit short-00, evict medium-00   free=5
+                iter 3  admit medium-00, evict short-00   free=2   ... forever
+
+              Two decisions that are each individually defensible compose into
+              a cycle:
+
+                * `preempt()` returns the victim to the FRONT of the queue, so
+                  a preempted request is not starved by everything behind it;
+                * FCFS admission only ever considers the queue HEAD.
+
+              Together: the victim becomes the head, is immediately re-admitted,
+              and immediately forces the next head to evict it again. Neither
+              rule is wrong on its own. The bug is in their composition, which
+              is why reviewing either one in isolation would not have found it.
+
+              Note this is NOT starvation - the failure mode predicted for R3.
+              Both requests are repeatedly ADMITTED. They just never keep their
+              memory long enough to produce a token. Forward progress is zero
+              while the system looks perfectly busy.
+Fix:          PREEMPTION NOW ONLY EVER SERVES A RUNNING SEQUENCE THAT CANNOT
+              GROW. A waiting request that does not fit simply waits; the
+              engine declines the admission and lets the running set drain a
+              step instead.
+Why it worked: the cycle needed a waiting request to be able to evict a running
+              one. Remove that and only a running sequence can trigger
+              eviction - and a running sequence that grows is making progress
+              by definition, so the cycle cannot form. This is structural, not
+              damping: there is no tuning constant and no thrash budget.
+              Rejected alternatives: sending the victim to the BACK of the
+              queue (breaks the cycle but reintroduces the starvation that
+              front-insertion existed to prevent), and an anti-thrash rule
+              (keeps both properties but adds state, a tuning knob, and only
+              bounds the thrashing rather than removing it).
+
+              Verified by replaying the admission policy with no model:
+              previously an endless 2-cycle, now terminates in 8 iterations
+              with all blocks returned.
+
+---
+
+## 2026-09-16 — R4 benchmark reported 126% cache utilisation
+
+Symptom:      the R3 baseline row printed `blk util 126.1%`.
+Expected:     a fraction, so at most 100%.
+Actual cause: the metric was `total tokens across all served requests /
+              (n_slots * max_len)`. That is only correct when every request
+              occupies a slot at the same time. On the capacity run - 56
+              requests through 7 slots - it over-counted by roughly 8x.
+Fix:          measure how full a slot is WHILE OCCUPIED: mean over requests of
+              (n_prompt + n_generated) / max_len. Directly comparable to R4's
+              block utilisation.
+Why it worked: it stopped conflating throughput-over-time with
+              occupancy-at-an-instant.
+Corrected:    R3 utilisation 39.0% -> 15.8%. The error FLATTERED the baseline,
+              so the real R4 advantage is larger than first reported
+              (15.8% vs 86.0%, not 39.0% vs 86.0%).
+
+WORTH KEEPING: this is the third error this session of the same shape - a
+constant or formula that is right for the case in mind, applied to a case where
+it is not (see also the -5 mask probe in B4, and the 22-block pool that was
+sized from max_new_tokens when the prompts stop at EOS long before). What caught
+it was that the number was IMPOSSIBLE rather than merely wrong. Had it printed
+84% it would have gone straight into the log unchallenged. Prefer metrics that
+can be visibly out of range over metrics that degrade quietly.

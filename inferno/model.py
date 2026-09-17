@@ -316,3 +316,75 @@ class InfernoQwen2:
                 lambda k, v, i=idx: cache.write_prefill(i, slot, k, v), mask)
         x = rms_norm(x[:, -1:], self.final_norm_w, self.cfg.rms_eps)
         return F.linear(x, self.embed)
+
+    @torch.inference_mode()
+    def forward_paged_prefill(self, input_ids: torch.Tensor, cache,
+                              table: list[int], n_tokens: int | None = None,
+                              start: int = 0) -> torch.Tensor:
+        """R4/R5 prefill: a prompt scattered across its blocks.
+
+        `start` is how many leading tokens are ALREADY in the cache from a
+        prefix-cache hit (R5). `input_ids` then holds only the suffix, and the
+        computation genuinely skipped is what makes the TTFT saving real rather
+        than bookkeeping - those blocks are never recomputed at all. Their K/V
+        are read by the gather like any other block.
+        """
+        b, t = input_ids.shape
+        assert b == 1, "prefill runs one request at a time"
+        total = n_tokens if n_tokens is not None else start + t
+        assert start + t == total, "input_ids must hold exactly the uncached suffix"
+
+        x = self.embed[input_ids]
+        position_ids = torch.arange(start, total, device=self.device).unsqueeze(0)
+        cos, sin = self.rope(position_ids, x.dtype)
+        tbl = torch.tensor([table], device=self.device)
+        n_keys = len(table) * cache.block_size
+        # Query row i sits at absolute position start+i. Key j is visible if it
+        # is causal AND inside the prompt - the tail of the last block is not
+        # written yet.
+        keys = torch.arange(n_keys, device=self.device)[None, :]
+        rows = torch.arange(start, total, device=self.device)[:, None]
+        visible = (keys <= rows) & (keys < total)
+        mask = torch.where(visible[None, None],
+                           torch.zeros((), dtype=x.dtype, device=self.device),
+                           mask_fill_value(x.dtype).to(self.device))
+
+        def write_kv(k, v, i):
+            cache.write_prefill(i, table, t, k, v, start=start)
+            return cache.gather(i, tbl)
+
+        for idx, lw in enumerate(self.layers):
+            x = self._layer(x, lw, cos, sin,
+                            lambda k, v, i=idx: write_kv(k, v, i), mask)
+        x = rms_norm(x[:, -1:], self.final_norm_w, self.cfg.rms_eps)
+        return F.linear(x, self.embed)
+
+    @torch.inference_mode()
+    def forward_paged_decode(self, input_ids: torch.Tensor, cache,
+                             tables: torch.Tensor, blocks: torch.Tensor,
+                             offsets: torch.Tensor, lengths: torch.Tensor,
+                             position_ids: torch.Tensor) -> torch.Tensor:
+        """R4 decode: one token per sequence, KV read through block tables.
+
+        `lengths` is each sequence's length AFTER this token, so key j is
+        visible to sequence i exactly when j < lengths[i]. Everything past that
+        is block padding or another sequence's data.
+        """
+        x = self.embed[input_ids]
+        cos, sin = self.rope(position_ids, x.dtype)
+        n_keys = tables.shape[1] * cache.block_size
+        visible = (torch.arange(n_keys, device=self.device)[None, :]
+                   < lengths[:, None])
+        mask = torch.where(visible[:, None, None, :],
+                           torch.zeros((), dtype=x.dtype, device=self.device),
+                           mask_fill_value(x.dtype).to(self.device))
+
+        def write_kv(k, v, i):
+            cache.write_decode(i, blocks, offsets, k, v)
+            return cache.gather(i, tables)
+
+        for idx, lw in enumerate(self.layers):
+            x = self._layer(x, lw, cos, sin,
+                            lambda k, v, i=idx: write_kv(k, v, i), mask)
+        x = rms_norm(x[:, -1:], self.final_norm_w, self.cfg.rms_eps)
+        return F.linear(x, self.embed)

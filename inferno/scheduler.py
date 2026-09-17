@@ -48,6 +48,7 @@ class Request:
     output: list[int] = field(default_factory=list)
 
     # timing, for the TTFT / latency measurements
+    preemptions: int = 0
     admitted_at: float | None = None
     first_token_at: float | None = None
     finished_at: float | None = None
@@ -177,6 +178,33 @@ class Scheduler:
         request.state = RequestState.FINISHED
         request.finished_at = now
         self.finished.append(request)
+
+    def preempt(self, request: Request) -> None:
+        """Evict a RUNNING request back to the queue, to be recomputed later.
+
+        R4 only. When memory runs out mid-generation something has to give, and
+        the alternative - reserving worst-case capacity at admission - is
+        exactly the contiguous-allocation problem paging removes.
+
+        The generated tokens are DISCARDED and the request restarts from its
+        prompt. That is real wasted work, and it is the honest price of
+        admitting optimistically; the benchmark counts preemptions so the price
+        is visible. It goes back to the FRONT of the queue: it was admitted
+        before everything still waiting, and sending it to the back is how a
+        preempted request starves.
+        """
+        if request.state is not RequestState.RUNNING:
+            raise RuntimeError(f"cannot preempt {request.id} in {request.state}")
+        self.running.remove(request)
+        if request.slot is not None:
+            self._free.insert(0, request.slot)
+        request.slot = None
+        request.state = RequestState.WAITING
+        request.output.clear()
+        request.first_token_at = None
+        request.admitted_at = None
+        request.preemptions += 1
+        self.waiting.insert(0, request)
 
     # -- introspection, for the benchmark ---------------------------------
 

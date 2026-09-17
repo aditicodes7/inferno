@@ -7,7 +7,7 @@ Phases map to the rung plan in `CLAUDE.md`: R0 baseline, R1 own attention + KV
 cache, R2 static batching, R3 continuous batching, R4 paged KV cache,
 R5 prefix caching.
 
-**Status: R3 complete and accepted. R0–R3 done; R4 (the hardest rung) next.**
+**Status: ALL SIX RUNGS COMPLETE AND ACCEPTED (R0–R5). Remaining: GPU runs on rented hardware, the vLLM comparison, and the gap analysis.**
 
 ---
 
@@ -157,6 +157,46 @@ continuous on TTFT p50 (0.034 s vs 0.102 s at 0.3 req/s), because a static batch
 prefills inside the batch while continuous spends a whole dedicated iteration on
 it. The dedicated prefill iteration is not free and the numbers say so.
 
+### 2026-09-16 — R4 policy: preemption serves running sequences only; block size 16
+**Chosen:** a request is evicted only so a RUNNING sequence can grow. A waiting
+request that does not fit waits. Block size 16, chosen from a measured sweep.
+**Rejected:** evicting on behalf of a waiting request (livelocked — §B7);
+victim to the back of the queue (reintroduces starvation); an anti-thrash rule
+(adds state and a knob, and only bounds the thrashing).
+**Why:** the livelock needed a *waiting* request to be able to evict a
+*running* one. Remove that and only a running sequence can trigger eviction —
+and a running sequence that grows is making progress by definition. Structural,
+not tuned.
+
+Block size came from the table, not from copying vLLM (which also uses 16):
+
+| block size | block utilisation | throughput |
+|---|---|---|
+| 4 | 95.7% | 115.26 tok/s |
+| **16** | **82.8%** | **146.37 tok/s** |
+| 64 | 65.3% | 138.74 tok/s |
+
+### 2026-09-17 — R5: exact token keys, full-block sharing + CoW on the tail, LRU cached tier
+**Chosen:** (a) a block is keyed by the EXACT token tuple of the whole prefix up
+to and including it; (b) full blocks are shared and the partial tail is shared
+too, with copy-on-write on first write; (c) a block whose refcount hits zero
+moves to an LRU of cached-but-reclaimable blocks rather than back to the free
+list.
+
+**Rejected:** (a) a 64-bit digest — compact, but a collision is undetectable at
+runtime and yields fluent wrong output, and token-identical output is this
+project's entire premise; (b) full-block-only sharing, which needs no CoW at all
+because a sequence then only ever writes into blocks it allocated itself — the
+simpler design, and it gives up the tail; (c) freeing immediately, which limits
+prefix caching to requests that overlap *in time*.
+
+**Why (c) matters most:** it is the single biggest lever on the hit rate. With
+immediate free, the fifteen RAG prompts only share when concurrent. With the LRU
+tier they share regardless of arrival order, which is what a real system needs.
+
+**Cost of (a):** O(prefix² / block_size) memory in keys. Fine at benchmark
+scale; production would want (parent_digest, block_tokens) plus verification.
+
 ---
 
 ## 2. Build Log
@@ -259,6 +299,56 @@ Did **not** work first try: **the scheduler assigned slots in the wrong place**
 Acceptance: `pytest tests/test_scheduler.py tests/test_continuous_parity.py` —
 **20 passed**. Output is identical whether a request arrives at t=0, staggered,
 or in a late burst, at 1, 2 and 4 slots.
+
+### Phase 4 (R4) — paged KV cache — 2026-09-16 — **COMPLETE, ACCEPTED**
+
+Built: `inferno/block_manager.py` (page table + refcounting, no tensors),
+`inferno/paged_cache.py` (physical blocks + the gather), `forward_paged_prefill`
+/ `forward_paged_decode` in `inferno/model.py`, `inferno/paged_engine.py`
+(admission, preemption, recompute), `Scheduler.preempt`,
+`tests/test_block_manager.py` (14 tests), `tests/test_paged_parity.py`,
+`bench/run_paged.py`.
+
+Worked first try: **the allocator — all 14 tests passed on the first run**,
+including the conservation invariant (`free + referenced == capacity`) checked
+after every operation, refcount-to-zero-exactly-once under repeated sharing, and
+a 200-cycle allocate/append/free loop with no leak. Also first try: the block
+table scatter and gather, and paged parity — identical output on the first
+end-to-end run.
+
+Did **not** work: **the preemption livelock (§B7)**, which is the best bug in
+the project so far. Then two measurement mistakes of my own: a test pool sized
+from `max_new_tokens` when the prompts hit EOS long before (so nothing was ever
+preempted, caught only because the test asserts `preemptions > 0`), and a
+utilisation metric that reported 126%.
+
+Acceptance: `pytest tests/test_block_manager.py tests/test_paged_parity.py` —
+**20 passed**. Parity at block sizes 4/16/64, parity under memory pressure with
+preemption actually occurring, parity at `max_concurrent=1`, and **zero blocks
+leaked in every case** (the engine raises if any block is outstanding at the
+end, so a leak fails the run rather than surfacing later as premature OOM).
+
+### Phase 5 (R5) — prefix caching — 2026-09-17 — **COMPLETE, ACCEPTED**
+
+Built: `inferno/prefix_cache.py` (`PrefixBlockManager` — prefix keys, the LRU
+cached tier, copy-on-write), `inferno/prefix_engine.py`, a `start` offset on the
+paged prefill path so cached blocks are genuinely never recomputed,
+`tests/test_prefix_cache.py` (11 tests), `tests/test_prefix_parity.py`,
+`bench/run_prefix.py`, and `run_tests.sh`.
+
+Worked first try: prefix matching and sharing, the LRU reclamation tier, CoW
+ownership transfer, and end-to-end parity — the first A/B run gave identical
+output with a 59% hit rate.
+
+Did **not** work first try: two of my own tests (one allocated four blocks from
+an exhausted pool; one mis-stated an expected hit count), and the full test suite
+itself (§B9). No engine bug in this rung.
+
+Acceptance: `pytest tests/test_prefix_cache.py tests/test_prefix_parity.py` —
+**16 passed**. Parity holds for share-then-diverge, for cache-on vs cache-off,
+for **divergence inside a block rather than on a boundary** (block_size 64 — the
+only configuration that actually exercises copy-on-write), for two identical
+prompts, and under a tight pool where reclamation and preemption interact.
 
 ---
 
@@ -619,6 +709,81 @@ immediately. All three of the R3 failure modes predicted at the start of the
 project are silent: a slot reused one iteration early is corruption, a leaked
 slot is a hang, a starved request raises nothing.
 
+### B7 — preemption livelock: two requests evict each other forever
+**2026-09-16. Fixed.** Full trace in `docs/bugs.md`.
+
+*Symptom:* the R4 test suite produced no output and did not terminate. No error,
+no crash, no progress. Killed at 600 s.
+
+*Distinguishing test:* replay the **admission policy alone** — BlockManager plus
+Scheduler, no model, no tensors. Under a second, versus the ten minutes the full
+suite had already burned.
+
+```
+short-00 needs 3 blocks, medium-00 needs 6, pool has 8
+
+iter 0  admit short-00                   free=5
+iter 1  admit medium-00, evict short-00  free=2
+iter 2  admit short-00, evict medium-00  free=5
+iter 3  admit medium-00, evict short-00  free=2   ... forever
+```
+
+*Root cause:* **two individually correct rules composing into a cycle.**
+`preempt()` returns the victim to the FRONT of the queue so it is not starved by
+everything behind it; FCFS admission only considers the HEAD. Together the victim
+becomes the head, is immediately re-admitted, and immediately forces the next head
+to evict it again.
+
+*Why it is worth keeping:* this is **not starvation**, the failure mode predicted
+for the scheduler at the start of the project. Both requests were repeatedly
+*admitted*. They simply never held memory long enough to produce a token —
+forward progress exactly zero while the system looked perfectly busy. Reviewing
+either rule in isolation would never have found it; neither is wrong alone.
+
+*Fix:* preemption now only ever serves a running sequence that cannot grow. The
+cycle required a waiting request to be able to evict a running one; removing that
+makes progress structural rather than tuned.
+
+### B8 — the R4 benchmark reported 126% cache utilisation
+**2026-09-16. Fixed.** The metric divided total tokens across all served
+requests by `n_slots × max_len`, which is correct only when every request holds
+a slot simultaneously. On the capacity run — 56 requests through 7 slots — it
+over-counted roughly 8×. Corrected to occupancy-while-resident: **R3's real
+utilisation is 15.8%, not 39.0%.** The error flattered the baseline, so R4's
+advantage is *larger* than first reported.
+
+**Third error this session of the same shape** — a constant or formula that is
+right for the case in mind, applied to a case where it is not. See also the −5
+mask probe in §B4, and a test pool sized from `max_new_tokens` when the prompts
+stop at EOS long before. What caught this one is that the number was
+**impossible** rather than merely wrong; at 84% it would have gone into the log
+unchallenged. Prefer metrics that can be visibly out of range.
+
+### B9 — the test suite swapped itself to a standstill
+**2026-09-17. Fixed, and it is a constraint rather than a defect.**
+
+*Symptom:* `pytest tests/` ran 25 minutes with no output and no progress.
+
+*Diagnosis:* the process was at **48 MB RSS and ~11% CPU** with system swap at
+**6.97 GB of 8 GB**. Not hung — paged out.
+
+*Root cause:* every test file holds its engine in a **session-scoped** fixture,
+and one pytest session keeps them all alive at once: fp16 for `test_parity`,
+fp32 **and** fp16 for `test_batch_parity`, fp32 for `test_continuous_parity`,
+`test_paged_parity` and `test_prefix_parity`. That is roughly five model copies
+resident on a machine that holds about two. Each file passes comfortably alone.
+
+*Fix:* `run_tests.sh` runs each file in its own pytest process, so each engine
+is freed before the next loads. The three tensor-free files run first, so a logic
+regression surfaces in 0.05 s instead of after several minutes of model loading.
+
+*Why it is worth keeping:* I had told the user this run would take 5–8 minutes
+and attributed the wait to model loading. It would never have finished. **A
+process that is swapping looks exactly like a process that is working**, and the
+distinguishing evidence — RSS far below the working set, CPU far below 100% —
+is not visible from the test output at all. This will matter again on rented GPU
+instances, which often have less RAM than this laptop.
+
 ---
 
 ## 4. Benchmark Results
@@ -813,6 +978,73 @@ whole dedicated iteration on prefill while static prefills inside its batch.
 Continuous batching is not free; it is a trade that only pays once arrivals
 overlap.
 
+### R4 — paged KV cache vs contiguous, at a FIXED memory budget — **ACCEPTED**
+**Hardware: MacBook, Apple Silicon, MPS, float16. NOT a GPU number.**
+48 MB KV budget for both designs, 56 requests of short/medium chat traffic,
+`max_new_tokens=40`. `max_len` is 525 — sized for the longest prompt the system
+might see (485) plus generation, which is what contiguous reservation requires
+and is precisely the case it handles worst.
+
+| | concurrent | tok/s | wall | utilisation | preemptions |
+|---|---|---|---|---|---|
+| R3 contiguous | 7 | 39.19 | 51.1 s | 15.8% | 0 |
+| **R4 paged, bs=16** | **56** | **110.65** | **18.1 s** | **86.0%** | 8 |
+
+**Headline: 8× the concurrent sequences at identical memory.** Utilisation 5.4×,
+throughput 2.8×, wall clock 2.8× shorter.
+
+Block size sweep (48 MB, 20 requests): bs=4 → 95.7% util / 115.26 tok/s;
+**bs=16 → 82.8% / 146.37**; bs=64 → 65.3% / 138.74.
+
+Raw: [`r4_paged_mps_20260916_201758.json`](results/mac/) (capacity) ·
+[`…201457.json`](results/mac/) (equal concurrency) · [`…201410.json`](results/mac/) (block sweep)
+
+*Interpretation.* R3's concurrency is `budget / (max_len × bytes_per_token)` —
+fixed in advance, and independent of how long sequences actually are. This
+workload's sequences average ~77 tokens against a 525-token reservation, so **84%
+of the reserved cache never holds a token.** Paging allocates on demand, so the
+same bytes hold 8× as many sequences and the throughput follows from the extra
+concurrency, not from paging being faster per step.
+
+*A prediction of mine that the measurement contradicted.* I expected paging to
+cost throughput, because the gather materialises a contiguous tensor every decode
+step where vLLM's fused kernel does not. **At equal concurrency (140 MB, 20
+sequences both ways) paged is ~8% FASTER: 122.09 vs 112.98 tok/s.** The reason is
+that R3's slot cache *also* gathers — `k[layer][slots][:, :, :read_len]` is
+advanced indexing, which copies. So this measures one gather against another, and
+**the cost of the gather relative to a fused kernel remains unmeasured** — see Q9.
+It would be easy and wrong to report the 8% as "paging is free."
+
+### R5 — prefix caching on a shared-document workload — **ACCEPTED**
+**Hardware: MacBook, Apple Silicon, MPS, float16. NOT a GPU number.**
+15 long prompts sharing one ~2000-character document (prompt lengths 466–485
+tokens), `max_new_tokens=24`, block size 16, 768 blocks. A/B on the same engine
+with only the cache toggled.
+
+| prefix cache | hit rate | prefill tokens | saved | cold TTFT | hit TTFT | wall | tok/s |
+|---|---|---|---|---|---|---|---|
+| off | 0.0% | 7092 / 7092 | 0.0% | 1730.8 ms | — | 56.7 s | 6.34 |
+| **on** | **83.8%** | **1044 / 7092** | **85.3%** | 1392.4 ms | **354.2 ms** | **19.0 s** | **18.95** |
+
+**TTFT on a cache hit: 1730.8 → 354.2 ms (4.89×). Wall clock 2.99×.**
+
+Raw: [`r5_prefix_mps_rag_20260917_114907.json`](results/mac/)
+
+*Correctness proof:* 16 tests. Output identical to serving each request alone,
+and identical to running with the cache disabled — including share-then-diverge
+and divergence inside a block.
+
+*Interpretation.* 85.3% of all prefill tokens are never computed, because the
+document's K/V are bit-identical across every request that shares it. This is the
+only rung whose win is in *avoided work* rather than better scheduling or better
+packing, which is why it is the largest single speedup measured.
+
+*The limit, measured.* A cache hit computes ~8.7% of the prompt's tokens but
+still takes ~23% of a cold prefill's time. The saving lands on the projections,
+the MLP and the attention *math* — but the **gather is unchanged**: every layer
+still materialises the whole block table regardless of how much of it was cached.
+Same structural ceiling as Q9, now visible from a second direction.
+
 ---
 
 ## 5. Open Questions
@@ -919,6 +1151,24 @@ every running request. Chunked prefill — splitting a prompt across several
 iterations and mixing it into the decode batch — is what production engines do
 instead. It interacts directly with R4's block allocator, so it is worth
 revisiting there rather than retrofitting now.
+
+### Q9 — What does the gather actually cost against a fused kernel? **[OPEN, blocks the gap analysis]**
+The equal-concurrency comparison above measures R4's gather against R3's gather,
+because both materialise. It says nothing about the thing that matters for the
+vLLM comparison: a fused paged-attention kernel that walks the block table inside
+the kernel and never materialises at all. Two ways to get the number: build a
+contiguous-attention baseline that does no gather (R2's batched cache is close),
+or measure it directly against vLLM on GPU. The second is the real answer and it
+is part of the final phase anyway. **This is likely the single largest line item
+in the gap analysis, and it is currently unquantified.**
+
+### Q10 — Does preemption need a watermark? **[OPEN, low priority]**
+8 preemptions across 56 requests at 48 MB — low enough not to matter here. The
+livelock fix guarantees progress but does not prevent thrashing: a preempted
+request goes to the front of the queue and can be re-admitted as soon as its own
+freed blocks make room. Under heavier pressure a reserve threshold (do not
+re-admit below N free blocks) is the standard answer. Not needed at these rates,
+so not built.
 
 ### Q3 — Was B2 actually Metal shader caching? **[OPEN, low priority]**
 Never directly proven. Clearing the Metal cache and re-running would settle it.

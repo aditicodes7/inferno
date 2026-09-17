@@ -350,3 +350,92 @@ None of them produce an exception, and none of them need a model to test. The
 separation let `tests/test_scheduler.py` run in 0.01s and catch B6 before the
 engine existed at all. Every other bug in this project so far was found by a
 multi-minute benchmark run.
+
+---
+
+## 2026-09-16 — R4: preemption serves running sequences only
+
+**Chosen:** a request is evicted only to let a RUNNING sequence grow. A waiting
+request that does not fit waits; the engine declines the admission and lets the
+running set drain a step.
+
+**Rejected:** evicting on behalf of a waiting request (livelocked - see
+`docs/bugs.md`); sending preempted requests to the back of the queue
+(reintroduces starvation); an anti-thrash rule (adds state and a tuning knob,
+and only bounds the thrashing).
+
+**Why:** the livelock needed a waiting request to be able to evict a running
+one. Removing that makes progress structural rather than tuned - a running
+sequence that grows is making progress by definition.
+
+---
+
+## 2026-09-16 — Block size 16 (studied, not inherited)
+
+**Chosen:** 16 as the default, measured against 4 and 64 at a fixed 48 MB
+budget.
+
+| block size | block utilisation | throughput |
+|---|---|---|
+| 4 | 95.7% | 115.26 tok/s |
+| **16** | **82.8%** | **146.37 tok/s** |
+| 64 | 65.3% | 138.74 tok/s |
+
+**Why:** exactly the predicted trade - small blocks waste least but multiply
+per-block bookkeeping and gather work; large blocks gather cheaply but strand up
+to `block_size - 1` tokens per sequence. 16 wins on throughput here. It is also
+vLLM's default, which is reassuring but was not the reason: the number came from
+this table.
+
+---
+
+## 2026-09-16 — A feasibility check at startup, which is not a reservation
+
+**Chosen:** `PagedEngine.run` refuses to start if any request's worst case
+(`n_prompt + max_new_tokens`) cannot fit in the entire block pool.
+
+**Rejected:** discovering it mid-run, which is what happened first - a confusing
+`OutOfBlocks` partway through generation, far from the cause.
+
+**Why:** paging still allocates on demand; this reserves nothing. But a sequence
+whose worst case exceeds the whole pool is unservable - it will be admitted,
+grow, find nothing left to evict, and fail. Better to say so before any work is
+done.
+
+---
+
+## 2026-09-17 — R5: exact token keys, tail sharing with CoW, an LRU cached tier
+
+**Chosen:** a block is keyed by the exact token tuple of the entire prefix up to
+and including it; full blocks AND the partial tail are shared, with
+copy-on-write on first write; a block at refcount zero moves to an LRU of
+cached-but-reclaimable blocks rather than to the free list.
+
+**Rejected:** a 64-bit digest (a collision is undetectable at runtime and gives
+fluent wrong output); full-block-only sharing (needs no CoW at all, and gives up
+the tail); freeing immediately (limits prefix caching to requests that overlap in
+time).
+
+**Why the key is the whole prefix, not the block's contents:** block 3's K/V
+depend on blocks 0-2. Two sequences whose block 3 holds identical tokens after
+different preceding tokens have entirely different K/V there. Keying on contents
+alone is silent corruption. `test_identical_block_after_different_prefix_is_not_shared`
+is the guard.
+
+**Why the LRU tier:** it is the single biggest lever on hit rate. Without it the
+fifteen RAG prompts only share when concurrent; with it they share regardless of
+arrival order.
+
+---
+
+## 2026-09-17 — Tests run one file per process (`run_tests.sh`)
+
+**Chosen:** each test file gets its own pytest process.
+
+**Rejected:** `pytest tests/`, which is the obvious thing and does not work here.
+
+**Why:** every file holds its engine in a session-scoped fixture, so one session
+keeps ~5 model copies resident. On this machine that swaps to a standstill - 25
+minutes at 48MB RSS and 11% CPU with swap at 6.9GB of 8GB. Separate processes
+free each engine before the next loads. The three tensor-free files run first so
+a logic regression surfaces in 0.05s rather than after minutes of model loading.

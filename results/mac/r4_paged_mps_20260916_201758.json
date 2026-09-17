@@ -1,0 +1,44 @@
+{
+  "rung": "R4",
+  "run_at": "2026-09-16T20:16:46",
+  "config": {
+    "budget_bytes": 48000000,
+    "bytes_per_token": 12288,
+    "max_len": 525,
+    "n_requests": 56,
+    "max_new_tokens": 40,
+    "device": "mps",
+    "dtype": "float16",
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "prompts_version": 1
+  },
+  "environment": {
+    "torch": "2.14.0",
+    "transformers": "5.17.0",
+    "platform": "macOS-14.5-arm64-arm-64bit"
+  },
+  "runs": {
+    "r3": {
+      "design": "R3 contiguous",
+      "concurrent_capacity": 7,
+      "peak_concurrent": 7,
+      "throughput_tok_s": 39.19285090912113,
+      "wall_clock_s": 51.13177412500045,
+      "kv_bytes": 45158400,
+      "preemptions": 0,
+      "utilisation": 0.15765306122448983
+    },
+    "r4_bs16": {
+      "design": "R4 paged bs=16",
+      "n_blocks": 244,
+      "concurrent_capacity": null,
+      "peak_concurrent": 56,
+      "throughput_tok_s": 110.652048162564,
+      "wall_clock_s": 18.110826083000575,
+      "kv_bytes": 47972352,
+      "block_utilisation": 0.8603582368983279,
+      "preemptions": 8,
+      "blocks_leaked": 0
+    }
+  }
+}
