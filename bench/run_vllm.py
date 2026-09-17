@@ -86,14 +86,30 @@ def main() -> None:
         if n > 1 and full > ttft1:
             seq_decode_tok_s.append((n - 1) / (full - ttft1))
 
+    def _ts(m, *names):
+        """vLLM renames these between versions (first_token_time became
+        first_token_ts in 0.29). The sequential pass above is the number we
+        actually compare on, so this is best-effort and must never be fatal."""
+        for n in names:
+            v = getattr(m, n, None)
+            if v is not None:
+                return v
+        return None
+
     records, ttfts = [], []
     for p, o in zip(prompts, outs):
         out = o.outputs[0]
         ids = list(out.token_ids)
-        m = o.metrics
-        ttft = (m.first_token_time - m.arrival_time) if m and m.first_token_time else None
-        decode_s = ((m.finished_time - m.first_token_time)
-                    if m and m.finished_time and m.first_token_time else None)
+        m = getattr(o, "metrics", None)
+        ttft = decode_s = None
+        if m is not None:
+            arrival = _ts(m, "arrival_time", "arrival_ts")
+            first = _ts(m, "first_token_ts", "first_token_time")
+            last = _ts(m, "last_token_ts", "finished_time", "finished_ts")
+            if arrival is not None and first is not None:
+                ttft = first - arrival
+            if first is not None and last is not None:
+                decode_s = last - first
         if ttft is not None:
             ttfts.append(ttft)
         records.append({
@@ -106,7 +122,7 @@ def main() -> None:
         })
 
     gen = sum(r["n_generated"] - 1 for r in records)
-    dec = sum(r["decode_s"] for r in records if r["decode_s"])
+    dec = sum(r["decode_s"] for r in records if r["decode_s"]) or 0.0
     summary = {
         "sequential_decode_tok_s": st.mean(seq_decode_tok_s) if seq_decode_tok_s else None,
         "sequential_ttft_p50_ms": percentile(seq_ttft, .50) * 1000,
@@ -115,6 +131,7 @@ def main() -> None:
         "throughput_tok_s_wall": sum(r["n_generated"] for r in records) / wall,
         "ttft_p50_ms": percentile(ttfts, .50) * 1000 if ttfts else None,
         "ttft_p95_ms": percentile(ttfts, .95) * 1000 if ttfts else None,
+        "vllm_metrics_available": bool(ttfts),
         "wall_clock_s": wall,
         "n_prompts": len(records),
     }
